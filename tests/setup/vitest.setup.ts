@@ -1,7 +1,14 @@
 import '@testing-library/jest-dom/vitest';
-import { beforeEach, vi } from 'vitest';
+import { cleanup } from '@testing-library/react';
+import { afterEach, beforeEach, vi } from 'vitest';
 
 import { createChromeMock } from '../mocks/chrome';
+
+Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+  value: vi.fn(),
+  writable: true,
+  configurable: true,
+});
 
 Object.defineProperty(globalThis, 'chrome', {
   value: createChromeMock(),
@@ -12,4 +19,8 @@ Object.defineProperty(globalThis, 'chrome', {
 beforeEach(() => {
   Object.assign(globalThis.chrome, createChromeMock());
   vi.clearAllMocks();
+});
+
+afterEach(() => {
+  cleanup();
 });
