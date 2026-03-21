@@ -1,0 +1,108 @@
+// ---------------------------------------------------------------------------
+// Runtime message protocol between popup ↔ background ↔ content scripts
+// ---------------------------------------------------------------------------
+
+import type {
+  ExtractedSourceData,
+  JobPhase,
+  JobState,
+  RunMode,
+} from './types';
+
+// ---- Action discriminators ----
+
+export type MessageAction =
+  | 'START_JOB'
+  | 'CANCEL_JOB'
+  | 'GET_JOB_STATE'
+  | 'JOB_STATE_UPDATE'
+  | 'EXTRACT_SOURCE'
+  | 'EXTRACTION_RESULT'
+  | 'COMPOSE_POST'
+  | 'UPLOAD_MEDIA'
+  | 'CLICK_POST'
+  | 'X_ACTION_RESULT'
+  | 'FETCH_VIDEO_BLOB'
+  | 'LOG';
+
+// ---- Message payloads ----
+
+export interface StartJobMessage {
+  action: 'START_JOB';
+  sourceUrl: string;
+  mode: RunMode;
+  captionOverride?: string;
+}
+
+export interface CancelJobMessage {
+  action: 'CANCEL_JOB';
+}
+
+export interface GetJobStateMessage {
+  action: 'GET_JOB_STATE';
+}
+
+export interface JobStateUpdateMessage {
+  action: 'JOB_STATE_UPDATE';
+  state: JobState;
+}
+
+export interface ExtractSourceMessage {
+  action: 'EXTRACT_SOURCE';
+}
+
+export interface ExtractionResultMessage {
+  action: 'EXTRACTION_RESULT';
+  success: boolean;
+  data?: ExtractedSourceData;
+  error?: string;
+}
+
+export interface ComposePostMessage {
+  action: 'COMPOSE_POST';
+  text: string;
+}
+
+export interface UploadMediaMessage {
+  action: 'UPLOAD_MEDIA';
+  videoDataUrl: string; // base64 data URL for transfer
+  fileName: string;
+}
+
+export interface ClickPostMessage {
+  action: 'CLICK_POST';
+}
+
+export interface XActionResultMessage {
+  action: 'X_ACTION_RESULT';
+  step: 'compose' | 'upload' | 'post';
+  success: boolean;
+  error?: string;
+}
+
+export interface FetchVideoBlobMessage {
+  action: 'FETCH_VIDEO_BLOB';
+  videoUrl?: string;
+}
+
+export interface LogMessage {
+  action: 'LOG';
+  text: string;
+  phase?: JobPhase;
+}
+
+// ---- Union ----
+
+export type RuntimeMessage =
+  | StartJobMessage
+  | CancelJobMessage
+  | GetJobStateMessage
+  | JobStateUpdateMessage
+  | ExtractSourceMessage
+  | ExtractionResultMessage
+  | ComposePostMessage
+  | UploadMediaMessage
+  | ClickPostMessage
+  | XActionResultMessage
+  | FetchVideoBlobMessage
+  | LogMessage;
