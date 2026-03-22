@@ -37,21 +37,21 @@ function isLoggedIn(): boolean {
   );
 }
 
-function normalizeComposerText(text: string): string {
+export function normalizeComposerText(text: string): string {
   return text
     .replace(/\u00a0/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
-function isVisibleComposer(el: HTMLElement): boolean {
+export function isVisibleComposer(el: HTMLElement): boolean {
   const style = window.getComputedStyle(el);
   return style.display !== 'none' &&
     style.visibility !== 'hidden' &&
     el.getClientRects().length > 0;
 }
 
-function resolveEditableComposer(el: HTMLElement): HTMLElement | null {
+export function resolveEditableComposer(el: HTMLElement): HTMLElement | null {
   if (el.isContentEditable || el.getAttribute('role') === 'textbox') {
     return el;
   }
@@ -61,7 +61,7 @@ function resolveEditableComposer(el: HTMLElement): HTMLElement | null {
   );
 }
 
-function scoreComposer(el: HTMLElement): number {
+export function scoreComposer(el: HTMLElement): number {
   const rect = el.getBoundingClientRect();
   const area = rect.width * rect.height;
   const focused = document.activeElement === el || el.contains(document.activeElement);
@@ -119,14 +119,14 @@ async function readComposerText(): Promise<string> {
   return normalized;
 }
 
-function matchesExpectedComposerText(actual: string, expected: string): boolean {
+export function matchesExpectedComposerText(actual: string, expected: string): boolean {
   const normalizedExpected = normalizeComposerText(expected);
   if (!normalizedExpected) return actual.length > 0;
 
   return actual === normalizedExpected || actual.includes(normalizedExpected);
 }
 
-function splitIntoTypingChunks(text: string): string[] {
+export function splitIntoTypingChunks(text: string): string[] {
   const matches = text.match(/\S+\s*|\n+/g);
   return matches && matches.length > 0 ? matches : [text];
 }
