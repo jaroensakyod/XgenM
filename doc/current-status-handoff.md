@@ -43,6 +43,7 @@ The codebase builds successfully with `npm run build` in the current workspace.
 - Media upload is handled through the native web input element
 - Upload completion waits for UI signals before proceeding
 - The implementation preference is upload first, then confirm text state, which is more reliable for X
+- Phase 4 characterization now documents a remaining blind spot: visible composer text can still be a false positive if X's internal submit model ignores the current event sequence
 
 ### Popup UX
 
@@ -76,10 +77,11 @@ The codebase builds successfully with `npm run build` in the current workspace.
 
 ### High priority
 
-1. Test the end-to-end TikTok flow against multiple real URLs and record failures.
-2. Harden Facebook extraction with more selector sets and page-state parsing.
-3. Add a small settings screen for source credit, max hashtags, and caption template.
-4. Improve user-facing error messages when X composer or upload selectors fail.
+1. Run a browser-truth probe on X focused on whether the current composer sequence updates the real submit payload or only the visible DOM.
+2. If browser truth confirms the false-positive gap, refactor only the X composer insertion/event-fidelity path.
+3. Harden Facebook extraction with more selector sets and page-state parsing.
+4. Add a small settings screen for source credit, max hashtags, and caption template.
+5. Improve user-facing error messages when X composer or upload selectors fail.
 
 ### Medium priority
 
@@ -113,6 +115,7 @@ Verified in this workspace on 2026-03-21:
 
 - `npm run build` completed successfully
 - VS Code diagnostics returned no errors for the workspace
+- Characterization tests cover a submit-semantics harness that reproduces visible-text-without-submit-truth as a documented risk class
 
 ## Notes
 

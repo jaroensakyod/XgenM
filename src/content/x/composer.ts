@@ -131,26 +131,47 @@ export function splitIntoTypingChunks(text: string): string[] {
   return matches && matches.length > 0 ? matches : [text];
 }
 
+export interface ComposerInsertionRuntime {
+  execCommand?: (
+    commandId: string,
+    showUI?: boolean,
+    value?: string,
+  ) => boolean;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+export async function applyComposerTextInsertion(
+  el: HTMLElement,
+  text: string,
+  runtime: ComposerInsertionRuntime = {},
+): Promise<void> {
+  const execCommand = runtime.execCommand
+    ?? ((commandId: string, showUI?: boolean, value?: string) =>
+      document.execCommand(commandId, showUI ?? false, value));
+  const wait = runtime.sleep ?? sleep;
+
+  el.focus();
+  await wait(200);
+
+  execCommand('selectAll', false);
+  execCommand('delete', false);
+
+  for (const chunk of splitIntoTypingChunks(text)) {
+    execCommand('insertText', false, chunk);
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, data: chunk }));
+    await wait(Math.min(220, Math.max(60, chunk.length * 18)));
+  }
+
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
 /**
  * Insert text into X's contenteditable composer.
  * Dispatches the same input events the real UI would produce.
  */
 async function insertText(text: string): Promise<void> {
   const el = await getComposerElement();
-  el.focus();
-  await sleep(200);
-
-  // Use execCommand for broad contenteditable compatibility
-  document.execCommand('selectAll', false);
-  document.execCommand('delete', false);
-
-  for (const chunk of splitIntoTypingChunks(text)) {
-    document.execCommand('insertText', false, chunk);
-    el.dispatchEvent(new InputEvent('input', { bubbles: true, data: chunk }));
-    await sleep(Math.min(220, Math.max(60, chunk.length * 18)));
-  }
-
-  el.dispatchEvent(new Event('change', { bubbles: true }));
+  await applyComposerTextInsertion(el, text);
 }
 
 async function ensureComposerText(text: string, maxAttempts = 3): Promise<void> {

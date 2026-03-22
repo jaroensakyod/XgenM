@@ -40,7 +40,7 @@ The extension is designed to:
 
 - Facebook Reel support is present but more fragile than TikTok support
 - End-to-end runtime behavior still depends on live DOM structures on TikTok, Facebook, and X
-- There are no automated tests yet
+- Browser-truth validation is still required for X because visible composer text can diverge from the submit model X actually serializes
 - Full production hardening still needs more real-world validation and selector maintenance
 
 ## Tech Stack
@@ -121,6 +121,15 @@ Build output is written to `dist/`.
 3. Add a lightweight manual regression checklist for TikTok and X UI changes.
 4. Add automated tests around shared text and URL utilities.
 5. Improve failure reporting when upload or composer selectors change.
+
+## X Composer Investigation Note
+
+- Characterization tests now cover shared text building, upload-first orchestration, and submit-semantics probes under jsdom.
+- Current evidence says `execCommand + input/change` can make caption text visible in the composer while a stricter editor model still has no submit-state evidence.
+- Treat DOM text as necessary but not sufficient for auto-post safety.
+- Before changing production composer logic, require both of these signals in some grounded harness or browser-truth run:
+  - The visible composer text matches the expected caption.
+  - A tracked submit model or browser-truth signal confirms the same caption would be serialized on submit.
 
 ## Notes
 

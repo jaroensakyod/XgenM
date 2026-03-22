@@ -1,6 +1,7 @@
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
 
 import {
+  applyComposerTextInsertion,
   normalizeComposerText,
   isVisibleComposer,
   resolveEditableComposer,
@@ -302,7 +303,7 @@ describe('splitIntoTypingChunks', () => {
   it('preserves newlines as separate chunks', () => {
     const chunks = splitIntoTypingChunks('line1\nline2');
     expect(chunks.join('')).toBe('line1\nline2');
-    expect(chunks.some((c) => c.includes('\n'))).toBe(true);
+    expect(chunks.some((chunk: string) => chunk.includes('\n'))).toBe(true);
   });
 
   it('returns single-element array for text without word boundaries', () => {
@@ -316,14 +317,14 @@ describe('splitIntoTypingChunks', () => {
 describe('composer selection semantics (selector coverage)', () => {
   it('COMPOSER_TEXT_SELECTORS includes the primary tweetTextarea selector', () => {
     expect(
-      COMPOSER_TEXT_SELECTORS.some((s) => s.includes('tweetTextarea_0')),
+      COMPOSER_TEXT_SELECTORS.some((selector: string) => selector.includes('tweetTextarea_0')),
     ).toBe(true);
   });
 
   it('COMPOSER_TEXT_SELECTORS has a fallback contenteditable+textbox selector', () => {
     expect(
       COMPOSER_TEXT_SELECTORS.some(
-        (s) => s.includes('contenteditable') && s.includes('textbox'),
+        (selector: string) => selector.includes('contenteditable') && selector.includes('textbox'),
       ),
     ).toBe(true);
   });
@@ -371,5 +372,119 @@ describe('composer selection semantics (selector coverage)', () => {
     expect(score).toBeGreaterThan(0);
     // In jsdom, only role=textbox bonus (1M) applies (isContentEditable is false)
     expect(score).toBeGreaterThan(1_000_000);
+  });
+});
+
+// ---- Phase 4: Submit semantics probe layer ----
+
+describe('submit semantics probe layer', () => {
+  it('documents the current insertion event sequence as input/change only', async () => {
+    const editor = createComposerNode({
+      contentEditable: true,
+      role: 'textbox',
+      width: 400,
+      height: 120,
+    });
+    editor.tabIndex = 0;
+
+    const events: string[] = [];
+    editor.addEventListener('beforeinput', () => events.push('beforeinput'));
+    editor.addEventListener('input', () => events.push('input'));
+    editor.addEventListener('change', () => events.push('change'));
+
+    const execCommand = vi.fn((commandId: string, _showUI?: boolean, value?: string) => {
+      if (commandId === 'selectAll' || commandId === 'delete') {
+        editor.textContent = '';
+      }
+
+      if (commandId === 'insertText') {
+        editor.textContent = `${editor.textContent ?? ''}${value ?? ''}`;
+      }
+
+      return true;
+    });
+
+    await applyComposerTextInsertion(editor, 'hello world', {
+      execCommand,
+      sleep: async () => {},
+    });
+
+    expect(events).toContain('input');
+    expect(events).toContain('change');
+    expect(events).not.toContain('beforeinput');
+  });
+
+  it('shows visible composer text can pass while submit-state stays empty', async () => {
+    const editor = createComposerNode({
+      contentEditable: true,
+      role: 'textbox',
+      width: 400,
+      height: 120,
+    });
+    editor.tabIndex = 0;
+
+    const submitModel = { value: '' };
+    editor.addEventListener('beforeinput', (event) => {
+      submitModel.value += (event as InputEvent).data ?? '';
+    });
+
+    const execCommand = vi.fn((commandId: string, _showUI?: boolean, value?: string) => {
+      if (commandId === 'selectAll' || commandId === 'delete') {
+        editor.textContent = '';
+      }
+
+      if (commandId === 'insertText') {
+        editor.textContent = `${editor.textContent ?? ''}${value ?? ''}`;
+      }
+
+      return true;
+    });
+
+    await applyComposerTextInsertion(editor, 'Visible caption only', {
+      execCommand,
+      sleep: async () => {},
+    });
+
+    const visibleText = normalizeComposerText(editor.textContent ?? '');
+    expect(visibleText).toBe('Visible caption only');
+    expect(matchesExpectedComposerText(visibleText, 'Visible caption only')).toBe(true);
+    expect(submitModel.value).toBe('');
+  });
+
+  it('defines a submit-truth gate that blocks posting without tracked editor evidence', async () => {
+    const editor = createComposerNode({
+      contentEditable: true,
+      role: 'textbox',
+      width: 400,
+      height: 120,
+    });
+    editor.tabIndex = 0;
+
+    const submitModel = { value: '' };
+    const hasSubmitStateEvidence = (expected: string) => {
+      const visibleText = normalizeComposerText(editor.textContent ?? '');
+      return matchesExpectedComposerText(visibleText, expected)
+        && normalizeComposerText(submitModel.value) === normalizeComposerText(expected);
+    };
+
+    const execCommand = vi.fn((commandId: string, _showUI?: boolean, value?: string) => {
+      if (commandId === 'selectAll' || commandId === 'delete') {
+        editor.textContent = '';
+      }
+
+      if (commandId === 'insertText') {
+        editor.textContent = `${editor.textContent ?? ''}${value ?? ''}`;
+      }
+
+      return true;
+    });
+
+    await applyComposerTextInsertion(editor, 'Guard this caption', {
+      execCommand,
+      sleep: async () => {},
+    });
+
+    expect(normalizeComposerText(editor.textContent ?? '')).toBe('Guard this caption');
+    expect(hasSubmitStateEvidence('Guard this caption')).toBe(false);
   });
 });
