@@ -105,7 +105,9 @@ export async function ensureComposerText(
         insertionStrategy: 'execCommand-insertText',
         visibleText: actual,
         visibleMatchesExpected: true,
-        errorDetail: `Post button stayed disabled after ${maxAttempts} attempts (selector: ${lastPostButtonSelector}).`,
+        errorDetail:
+          `Post button stayed disabled after ${maxAttempts} attempts ` +
+          `(composer: ${lastSelector}, button: ${lastPostButtonSelector}, visibleChars: ${actual.length}).`,
       };
     }
   }

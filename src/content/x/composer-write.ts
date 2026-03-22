@@ -4,6 +4,8 @@
 
 import { sleep } from '@shared/timing';
 
+const INSERT_TEXT_INPUT_TYPE = 'insertText';
+
 export function normalizeComposerText(text: string): string {
   return text
     .replace(/\u00a0/g, ' ')
@@ -32,12 +34,28 @@ export interface ComposerInsertionRuntime {
   sleep?: (ms: number) => Promise<void>;
 }
 
+function defineEventProperties<T extends Event>(
+  event: T,
+  properties: Record<string, unknown>,
+): T {
+  for (const [key, value] of Object.entries(properties)) {
+    Object.defineProperty(event, key, {
+      value,
+      configurable: true,
+      enumerable: true,
+    });
+  }
+
+  return event;
+}
+
 function createKeyboardEvent(type: 'keydown' | 'keyup', chunk: string): Event {
-  const key = chunk === '\n'
-    ? 'Enter'
-    : chunk.length === 1
-      ? chunk
-      : 'Unidentified';
+  let key = 'Unidentified';
+  if (chunk === '\n') {
+    key = 'Enter';
+  } else if (chunk.length === 1) {
+    key = chunk;
+  }
 
   if (typeof KeyboardEvent === 'function') {
     return new KeyboardEvent(type, {
@@ -51,8 +69,7 @@ function createKeyboardEvent(type: 'keydown' | 'keyup', chunk: string): Event {
     bubbles: true,
     cancelable: type === 'keydown',
   });
-  Object.defineProperty(event, 'key', { value: key });
-  return event;
+  return defineEventProperties(event, { key });
 }
 
 function createTypingInputEvent(type: 'beforeinput' | 'input', chunk: string): Event {
@@ -60,7 +77,7 @@ function createTypingInputEvent(type: 'beforeinput' | 'input', chunk: string): E
     bubbles: true,
     cancelable: type === 'beforeinput',
     data: chunk,
-    inputType: 'insertText',
+    inputType: INSERT_TEXT_INPUT_TYPE,
   };
 
   if (typeof InputEvent === 'function') {
@@ -71,9 +88,10 @@ function createTypingInputEvent(type: 'beforeinput' | 'input', chunk: string): E
     bubbles: true,
     cancelable: type === 'beforeinput',
   });
-  Object.defineProperty(event, 'data', { value: chunk });
-  Object.defineProperty(event, 'inputType', { value: 'insertText' });
-  return event;
+  return defineEventProperties(event, {
+    data: chunk,
+    inputType: INSERT_TEXT_INPUT_TYPE,
+  });
 }
 
 export async function applyComposerTextInsertion(

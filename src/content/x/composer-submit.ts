@@ -6,6 +6,8 @@ import { waitForAnySelector, sleep } from '@shared/timing';
 import { ACTION_DELAY } from '@shared/constants';
 import { POST_BUTTON_SELECTORS } from './selectors';
 
+const POST_BUTTON_READY_TIMEOUT_MS = 5_000;
+
 function isPostButtonEnabled(button: HTMLElement): boolean {
   return button.getAttribute('aria-disabled') !== 'true'
     && button.getAttribute('data-disabled') !== 'true'
@@ -15,7 +17,7 @@ function isPostButtonEnabled(button: HTMLElement): boolean {
 export async function clickPost(): Promise<void> {
   await sleep(ACTION_DELAY);
 
-  const deadline = Date.now() + 5_000;
+  const deadline = Date.now() + POST_BUTTON_READY_TIMEOUT_MS;
   let sawPostButton = false;
 
   while (Date.now() < deadline) {

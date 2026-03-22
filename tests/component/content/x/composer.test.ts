@@ -424,11 +424,35 @@ describe('submit semantics probe layer', () => {
     editor.tabIndex = 0;
 
     const events: string[] = [];
+    const eventDetails = {
+      keydown: '',
+      beforeinput: { data: '', inputType: '' },
+      input: { data: '', inputType: '' },
+      keyup: '',
+    };
     editor.addEventListener('focus', () => events.push('focus'));
-    editor.addEventListener('keydown', () => events.push('keydown'));
-    editor.addEventListener('beforeinput', () => events.push('beforeinput'));
-    editor.addEventListener('input', () => events.push('input'));
-    editor.addEventListener('keyup', () => events.push('keyup'));
+    editor.addEventListener('keydown', (event) => {
+      events.push('keydown');
+      eventDetails.keydown = (event as KeyboardEvent).key;
+    });
+    editor.addEventListener('beforeinput', (event) => {
+      events.push('beforeinput');
+      eventDetails.beforeinput = {
+        data: (event as InputEvent).data ?? '',
+        inputType: (event as InputEvent).inputType,
+      };
+    });
+    editor.addEventListener('input', (event) => {
+      events.push('input');
+      eventDetails.input = {
+        data: (event as InputEvent).data ?? '',
+        inputType: (event as InputEvent).inputType,
+      };
+    });
+    editor.addEventListener('keyup', (event) => {
+      events.push('keyup');
+      eventDetails.keyup = (event as KeyboardEvent).key;
+    });
     editor.addEventListener('change', () => events.push('change'));
 
     const execCommand = vi.fn((commandId: string, _showUI?: boolean, value?: string) => {
@@ -443,12 +467,18 @@ describe('submit semantics probe layer', () => {
       return true;
     });
 
-    await applyComposerTextInsertion(editor, 'hello', {
+    await applyComposerTextInsertion(editor, 'h', {
       execCommand,
       sleep: async () => {},
     });
 
     expect(events).toEqual(['focus', 'keydown', 'beforeinput', 'input', 'keyup', 'change']);
+    expect(eventDetails).toEqual({
+      keydown: 'h',
+      beforeinput: { data: 'h', inputType: 'insertText' },
+      input: { data: 'h', inputType: 'insertText' },
+      keyup: 'h',
+    });
   });
 
   it('keeps submit-state listeners in sync with visible composer text', async () => {
