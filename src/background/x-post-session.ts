@@ -7,7 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import type { XActionResultMessage } from '@shared/messages';
-import type { ComposeEvidence, RunMode } from '@shared/types';
+import type { ComposeEvidence, JobPhase, RunMode } from '@shared/types';
 import { isSubmitEligible, isDraftEligible } from '@shared/types';
 import { ExtensionError } from '@shared/errors';
 
@@ -18,6 +18,7 @@ import { ExtensionError } from '@shared/errors';
 export interface XPostSessionDeps {
   sendToTab: <T>(tabId: number, message: Record<string, unknown>) => Promise<T>;
   log: (text: string) => void;
+  onPhaseChange?: (phase: JobPhase) => void;
 }
 
 export type XPostSessionOutcome =
@@ -44,6 +45,75 @@ export function evaluatePostEligibility(
   return 'fail';
 }
 
+function logVisibleVerification(
+  evidence: ComposeEvidence | undefined,
+  log: (text: string) => void,
+): void {
+  if (!evidence) {
+    log('Visible verification [proof]: no structured evidence returned; using backward-compatible success path.');
+    return;
+  }
+
+  log(
+    `Visible verification [proof]: status=${evidence.proofStatus} ` +
+      `selector=${evidence.targetSelector} ` +
+      `match=${evidence.visibleMatchesExpected ? 'yes' : 'no'} ` +
+      `chars=${evidence.visibleText.length}`,
+  );
+
+  if (evidence.errorDetail) {
+    log(`Proof detail [proof]: ${evidence.errorDetail}`);
+  }
+}
+
+function logSubmitGate(
+  decision: 'post' | 'draft-review' | 'fail',
+  mode: RunMode,
+  evidence: ComposeEvidence | undefined,
+  log: (text: string) => void,
+): void {
+  log(
+    `Submit gate [gating]: mode=${mode} decision=${decision} ` +
+      `proof=${evidence?.proofStatus ?? 'none'}`,
+  );
+}
+
+function buildComposeFailure(
+  composeResult: XActionResultMessage,
+): ExtensionError {
+  const rawError = composeResult.error ?? 'Composer fill failed';
+
+  if (composeResult.evidence?.errorDetail) {
+    return new ExtensionError(
+      `X compose failed at proof layer: ${composeResult.evidence.errorDetail}`,
+      'X_COMPOSER_NOT_FOUND',
+      true,
+    );
+  }
+
+  if (/not logged in/i.test(rawError)) {
+    return new ExtensionError(
+      `X compose failed at selector/login gate: ${rawError}`,
+      'X_LOGIN_MISSING',
+      true,
+    );
+  }
+
+  if (/not found|composer/i.test(rawError)) {
+    return new ExtensionError(
+      `X compose failed at selector layer: ${rawError}`,
+      'X_COMPOSER_NOT_FOUND',
+      true,
+    );
+  }
+
+  return new ExtensionError(
+    `X compose failed at insertion layer: ${rawError}`,
+    'X_COMPOSER_NOT_FOUND',
+    true,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Session runner
 // ---------------------------------------------------------------------------
@@ -55,7 +125,7 @@ export async function runXPostSession(
   hasMedia: boolean,
   deps: XPostSessionDeps,
 ): Promise<XPostSessionOutcome> {
-  const { sendToTab, log } = deps;
+  const { sendToTab, log, onPhaseChange } = deps;
 
   // ---- Compose ----
   log(hasMedia ? 'Typing caption after media upload…' : 'Filling composer…');
@@ -66,44 +136,43 @@ export async function runXPostSession(
   });
 
   if (!composeResult.success) {
-    throw new ExtensionError(
-      composeResult.error ?? 'Composer fill failed',
-      'X_COMPOSER_NOT_FOUND',
-    );
-  }
-
-  if (composeResult.evidence) {
-    log(
-      `Compose proof: ${composeResult.evidence.proofStatus} ` +
-      `(selector: ${composeResult.evidence.targetSelector}, ` +
-      `visible: "${composeResult.evidence.visibleText.slice(0, 60)}")`,
-    );
+    log(`Compose failure [compose]: ${composeResult.error ?? 'Composer fill failed'}`);
+    if (composeResult.evidence?.errorDetail) {
+      log(`Proof detail [proof]: ${composeResult.evidence.errorDetail}`);
+    }
+    throw buildComposeFailure(composeResult);
   }
 
   log(hasMedia ? 'Caption typed after media upload.' : 'Text inserted into composer.');
+  logVisibleVerification(composeResult.evidence, log);
 
   // ---- Evaluate eligibility from evidence ----
   const decision = evaluatePostEligibility(composeResult.evidence, mode);
+  logSubmitGate(decision, mode, composeResult.evidence, log);
 
   if (decision === 'draft-review') {
     log(
       mode === 'prepare-draft'
         ? 'Draft ready — review and post manually when ready.'
-        : `Proof status "${composeResult.evidence?.proofStatus}" insufficient for auto-post — stopping at draft review.`,
+        : `Submit gate held draft: proof status "${composeResult.evidence?.proofStatus}" is below auto-post threshold.`,
     );
     return { result: 'awaiting-review' };
   }
 
   if (decision === 'fail') {
     const proofStatus = composeResult.evidence?.proofStatus ?? 'unknown';
+    const errorDetail = composeResult.evidence?.errorDetail;
     throw new ExtensionError(
-      `Compose proof failed: ${proofStatus}`,
+      errorDetail
+        ? `X submit gate rejected proof layer: ${proofStatus} — ${errorDetail}`
+        : `X submit gate rejected proof layer: ${proofStatus}`,
       'X_COMPOSER_NOT_FOUND',
       true,
     );
   }
 
   // ---- Post ----
+  onPhaseChange?.('posting');
   log('Clicking Post…');
 
   const postResult = await sendToTab<XActionResultMessage>(xTabId, {

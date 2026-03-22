@@ -470,7 +470,14 @@ export async function startJob(
       postText,
       mode,
       !!videoDataUrl,
-      { sendToTab, log },
+      {
+        sendToTab,
+        log,
+        onPhaseChange: (phase) => {
+          currentJob!.phase = phase;
+          broadcast(currentJob!);
+        },
+      },
     );
 
     if (sessionOutcome.result === 'posted') {

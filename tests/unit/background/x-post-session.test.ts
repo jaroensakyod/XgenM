@@ -81,6 +81,7 @@ function makeDeps() {
   return {
     sendToTab: vi.fn(),
     log: vi.fn(),
+    onPhaseChange: vi.fn(),
   };
 }
 
@@ -110,6 +111,13 @@ describe('runXPostSession', () => {
 
     expect(result).toEqual({ result: 'posted' });
     expect(deps.sendToTab).toHaveBeenCalledTimes(2);
+    expect(deps.onPhaseChange).toHaveBeenCalledWith('posting');
+    expect(deps.log).toHaveBeenCalledWith(
+      expect.stringContaining('Visible verification [proof]: status=submit-ready'),
+    );
+    expect(deps.log).toHaveBeenCalledWith(
+      'Submit gate [gating]: mode=auto-post decision=post proof=submit-ready',
+    );
   });
 
   it('stops at draft when evidence is visible-only', async () => {
@@ -130,11 +138,17 @@ describe('runXPostSession', () => {
     const result = await runXPostSession(42, 'hello', 'auto-post', true, deps);
 
     expect(result).toEqual({ result: 'awaiting-review' });
-    // Should NOT send CLICK_POST
     expect(deps.sendToTab).toHaveBeenCalledTimes(1);
+    expect(deps.onPhaseChange).not.toHaveBeenCalled();
+    expect(deps.log).toHaveBeenCalledWith(
+      'Submit gate [gating]: mode=auto-post decision=draft-review proof=visible-only',
+    );
+    expect(deps.log).toHaveBeenCalledWith(
+      'Submit gate held draft: proof status "visible-only" is below auto-post threshold.',
+    );
   });
 
-  it('throws on proof-failed evidence', async () => {
+  it('throws on proof-failed evidence with proof-layer detail', async () => {
     const deps = makeDeps();
     deps.sendToTab.mockResolvedValueOnce({
       action: 'X_ACTION_RESULT',
@@ -152,7 +166,11 @@ describe('runXPostSession', () => {
 
     await expect(
       runXPostSession(42, 'hello', 'auto-post', true, deps),
-    ).rejects.toThrow('Compose proof failed');
+    ).rejects.toThrow('X submit gate rejected proof layer: proof-failed — empty');
+    expect(deps.log).toHaveBeenCalledWith('Proof detail [proof]: empty');
+    expect(deps.log).toHaveBeenCalledWith(
+      'Submit gate [gating]: mode=auto-post decision=fail proof=proof-failed',
+    );
   });
 
   it('returns awaiting-review for prepare-draft mode even with submit-ready', async () => {
@@ -174,6 +192,9 @@ describe('runXPostSession', () => {
 
     expect(result).toEqual({ result: 'awaiting-review' });
     expect(deps.sendToTab).toHaveBeenCalledTimes(1);
+    expect(deps.log).toHaveBeenCalledWith(
+      'Submit gate [gating]: mode=prepare-draft decision=draft-review proof=submit-ready',
+    );
   });
 
   it('posts when no evidence is returned (backward compat)', async () => {
@@ -193,9 +214,12 @@ describe('runXPostSession', () => {
     const result = await runXPostSession(42, 'hello', 'auto-post', false, deps);
 
     expect(result).toEqual({ result: 'posted' });
+    expect(deps.log).toHaveBeenCalledWith(
+      'Visible verification [proof]: no structured evidence returned; using backward-compatible success path.',
+    );
   });
 
-  it('throws when compose fails', async () => {
+  it('throws selector/login layer error when compose reports not logged in', async () => {
     const deps = makeDeps();
     deps.sendToTab.mockResolvedValueOnce({
       action: 'X_ACTION_RESULT',
@@ -206,6 +230,21 @@ describe('runXPostSession', () => {
 
     await expect(
       runXPostSession(42, 'hello', 'auto-post', true, deps),
-    ).rejects.toThrow('Not logged in');
+    ).rejects.toThrow('X compose failed at selector/login gate: Not logged in');
+    expect(deps.log).toHaveBeenCalledWith('Compose failure [compose]: Not logged in');
+  });
+
+  it('throws insertion layer error for generic compose failure', async () => {
+    const deps = makeDeps();
+    deps.sendToTab.mockResolvedValueOnce({
+      action: 'X_ACTION_RESULT',
+      step: 'compose',
+      success: false,
+      error: 'Input event dispatch failed',
+    } satisfies XActionResultMessage);
+
+    await expect(
+      runXPostSession(42, 'hello', 'auto-post', true, deps),
+    ).rejects.toThrow('X compose failed at insertion layer: Input event dispatch failed');
   });
 });
