@@ -9,9 +9,12 @@ import {
   matchesExpectedComposerText,
   splitIntoTypingChunks,
 } from '@content/x/composer';
+import { ensureComposerText } from '@content/x/composer-proof';
+import { clickPost } from '@content/x/composer-submit';
 import { COMPOSER_TEXT_SELECTORS } from '@content/x/selectors';
 import type { ComposeEvidence } from '@shared/types';
 import { isSubmitEligible, isDraftEligible } from '@shared/types';
+import { ACTION_DELAY } from '@shared/constants';
 
 // ---------------------------------------------------------------------------
 // Phase 2: X Composer DOM Truth Characterization
@@ -67,6 +70,33 @@ function createComposerNode(opts: {
 
   document.body.appendChild(el);
   return el;
+}
+
+function mockExecCommandOn(
+  editor: HTMLElement,
+  onInsert?: (value: string) => void,
+) {
+  const execCommand = vi.fn((commandId: string, _showUI?: boolean, value?: string) => {
+    if (commandId === 'selectAll' || commandId === 'delete') {
+      editor.textContent = '';
+    }
+
+    if (commandId === 'insertText') {
+      const inserted = value ?? '';
+      editor.textContent = `${editor.textContent ?? ''}${inserted}`;
+      onInsert?.(inserted);
+    }
+
+    return true;
+  });
+
+  Object.defineProperty(document, 'execCommand', {
+    value: execCommand,
+    writable: true,
+    configurable: true,
+  });
+
+  return execCommand;
 }
 
 // ---- normalizeComposerText ----
@@ -331,6 +361,10 @@ describe('composer selection semantics (selector coverage)', () => {
     ).toBe(true);
   });
 
+  it('COMPOSER_TEXT_SELECTORS has a plain contenteditable fallback selector', () => {
+    expect(COMPOSER_TEXT_SELECTORS).toContain('div[contenteditable="true"]');
+  });
+
   it('scoreComposer ranks contentEditable+textbox above plain div even with bigger area', () => {
     // This test characterizes whether the scoring logic would pick
     // an authoritative editor node over a larger mirror/preview node.
@@ -380,7 +414,7 @@ describe('composer selection semantics (selector coverage)', () => {
 // ---- Phase 4: Submit semantics probe layer ----
 
 describe('submit semantics probe layer', () => {
-  it('documents the current insertion event sequence as input/change only', async () => {
+  it('dispatches a human-like insertion event sequence', async () => {
     const editor = createComposerNode({
       contentEditable: true,
       role: 'textbox',
@@ -390,8 +424,11 @@ describe('submit semantics probe layer', () => {
     editor.tabIndex = 0;
 
     const events: string[] = [];
+    editor.addEventListener('focus', () => events.push('focus'));
+    editor.addEventListener('keydown', () => events.push('keydown'));
     editor.addEventListener('beforeinput', () => events.push('beforeinput'));
     editor.addEventListener('input', () => events.push('input'));
+    editor.addEventListener('keyup', () => events.push('keyup'));
     editor.addEventListener('change', () => events.push('change'));
 
     const execCommand = vi.fn((commandId: string, _showUI?: boolean, value?: string) => {
@@ -406,17 +443,15 @@ describe('submit semantics probe layer', () => {
       return true;
     });
 
-    await applyComposerTextInsertion(editor, 'hello world', {
+    await applyComposerTextInsertion(editor, 'hello', {
       execCommand,
       sleep: async () => {},
     });
 
-    expect(events).toContain('input');
-    expect(events).toContain('change');
-    expect(events).not.toContain('beforeinput');
+    expect(events).toEqual(['focus', 'keydown', 'beforeinput', 'input', 'keyup', 'change']);
   });
 
-  it('shows visible composer text can pass while submit-state stays empty', async () => {
+  it('keeps submit-state listeners in sync with visible composer text', async () => {
     const editor = createComposerNode({
       contentEditable: true,
       role: 'textbox',
@@ -450,7 +485,7 @@ describe('submit semantics probe layer', () => {
     const visibleText = normalizeComposerText(editor.textContent ?? '');
     expect(visibleText).toBe('Visible caption only');
     expect(matchesExpectedComposerText(visibleText, 'Visible caption only')).toBe(true);
-    expect(submitModel.value).toBe('');
+    expect(submitModel.value).toBe('Visible caption only');
   });
 
   it('defines a submit-truth gate that blocks posting without tracked editor evidence', async () => {
@@ -488,6 +523,61 @@ describe('submit semantics probe layer', () => {
 
     expect(normalizeComposerText(editor.textContent ?? '')).toBe('Guard this caption');
     expect(hasSubmitStateEvidence('Guard this caption')).toBe(false);
+  });
+
+  it('re-types until the post button becomes enabled and then returns submit-ready proof', async () => {
+    globalThis.chrome.runtime.sendMessage = vi.fn(() => Promise.resolve());
+
+    const editor = createComposerNode({
+      contentEditable: true,
+      role: 'textbox',
+      width: 400,
+      height: 120,
+    });
+    editor.tabIndex = 0;
+    editor.setAttribute('data-testid', 'tweetTextarea_0');
+
+    const button = document.createElement('button');
+    button.setAttribute('data-testid', 'tweetButtonInline');
+    button.disabled = true;
+    document.body.appendChild(button);
+
+    let insertAttempts = 0;
+    mockExecCommandOn(editor, () => {
+      insertAttempts += 1;
+      if (insertAttempts >= 2) {
+        button.disabled = false;
+      }
+    });
+
+    const evidence = await ensureComposerText('retry me', 3);
+
+    expect(insertAttempts).toBe(2);
+    expect(evidence.proofStatus).toBe('submit-ready');
+    expect(evidence.visibleText).toBe('retry me');
+    expect(evidence.visibleMatchesExpected).toBe(true);
+  });
+
+  it('waits for an enabled post button before clicking submit', async () => {
+    vi.useFakeTimers();
+    try {
+      const button = document.createElement('button');
+      button.setAttribute('data-testid', 'tweetButtonInline');
+      button.disabled = true;
+      const clickSpy = vi.spyOn(button, 'click');
+      document.body.appendChild(button);
+
+      const promise = clickPost();
+
+      await vi.advanceTimersByTimeAsync(ACTION_DELAY + 600);
+      button.disabled = false;
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      await promise;
+      expect(clickSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

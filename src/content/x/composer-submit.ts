@@ -6,31 +6,38 @@ import { waitForAnySelector, sleep } from '@shared/timing';
 import { ACTION_DELAY } from '@shared/constants';
 import { POST_BUTTON_SELECTORS } from './selectors';
 
+function isPostButtonEnabled(button: HTMLElement): boolean {
+  return button.getAttribute('aria-disabled') !== 'true'
+    && button.getAttribute('data-disabled') !== 'true'
+    && !(button as HTMLButtonElement).disabled;
+}
+
 export async function clickPost(): Promise<void> {
   await sleep(ACTION_DELAY);
 
-  const match = await waitForAnySelector<HTMLElement>(
-    POST_BUTTON_SELECTORS,
-  );
+  const deadline = Date.now() + 5_000;
+  let sawPostButton = false;
 
-  if (!match) {
-    throw new Error('Post button not found.');
-  }
+  while (Date.now() < deadline) {
+    const match = await waitForAnySelector<HTMLElement>(
+      POST_BUTTON_SELECTORS,
+      500,
+    );
 
-  const button = match.element;
-
-  if (
-    button.getAttribute('aria-disabled') === 'true' ||
-    (button as HTMLButtonElement).disabled
-  ) {
-    await sleep(2000);
-    if (
-      button.getAttribute('aria-disabled') === 'true' ||
-      (button as HTMLButtonElement).disabled
-    ) {
-      throw new Error('Post button is disabled — upload may still be processing.');
+    if (match) {
+      sawPostButton = true;
+      if (isPostButtonEnabled(match.element)) {
+        match.element.click();
+        return;
+      }
     }
+
+    await sleep(500);
   }
 
-  button.click();
+  if (sawPostButton) {
+    throw new Error('Post button is disabled — upload may still be processing.');
+  }
+
+  throw new Error('Post button not found.');
 }

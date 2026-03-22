@@ -3,7 +3,8 @@
 // ---------------------------------------------------------------------------
 
 import type { ComposeEvidence, ComposeProofStatus } from '@shared/types';
-import { sleep } from '@shared/timing';
+import { sleep, waitForAnySelector } from '@shared/timing';
+import { POST_BUTTON_SELECTORS } from './selectors';
 import { findBestComposer } from './composer-target';
 import {
   applyComposerTextInsertion,
@@ -27,12 +28,38 @@ async function readComposerText(): Promise<string> {
   return normalized;
 }
 
+function isPostButtonEnabled(button: HTMLElement): boolean {
+  return button.getAttribute('aria-disabled') !== 'true'
+    && button.getAttribute('data-disabled') !== 'true'
+    && !(button as HTMLButtonElement).disabled;
+}
+
+async function getPostButtonState(): Promise<{
+  enabled: boolean;
+  selector: string;
+}> {
+  const match = await waitForAnySelector<HTMLElement>(POST_BUTTON_SELECTORS, 1_500);
+
+  if (!match) {
+    return {
+      enabled: false,
+      selector: 'none',
+    };
+  }
+
+  return {
+    enabled: isPostButtonEnabled(match.element),
+    selector: match.selector,
+  };
+}
+
 export async function ensureComposerText(
   text: string,
   maxAttempts = 3,
 ): Promise<ComposeEvidence> {
   let lastSelector = 'unknown';
   let lastVisibleText = '';
+  let lastPostButtonSelector = 'none';
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     debugLog(`Ensuring caption is present (attempt ${attempt}/${maxAttempts}).`);
@@ -40,20 +67,45 @@ export async function ensureComposerText(
     const match = await findBestComposer();
     lastSelector = match.selector;
     await applyComposerTextInsertion(match.element, text);
-    await sleep(400);
+    await sleep(500);
 
     const actual = await readComposerText();
     lastVisibleText = actual;
     debugLog(`Composer now has ${actual.length} normalized chars.`);
 
     if (matchesExpectedComposerText(actual, text)) {
-      debugLog('Caption verification succeeded.');
+      const postButtonState = await getPostButtonState();
+      lastPostButtonSelector = postButtonState.selector;
+      debugLog(
+        `Post button state after typing: ${
+          postButtonState.enabled ? 'enabled' : 'disabled'
+        } via ${postButtonState.selector}.`,
+      );
+
+      if (postButtonState.enabled) {
+        debugLog('Caption verification succeeded with submit-ready state.');
+        return {
+          proofStatus: 'submit-ready' as ComposeProofStatus,
+          targetSelector: lastSelector,
+          insertionStrategy: 'execCommand-insertText',
+          visibleText: actual,
+          visibleMatchesExpected: true,
+        };
+      }
+
+      if (attempt < maxAttempts) {
+        debugLog('Caption is visible but post button is not ready yet; clearing and retrying.');
+        continue;
+      }
+
+      debugLog('Caption verification succeeded, but submit state stayed disabled.');
       return {
         proofStatus: 'draft-ready' as ComposeProofStatus,
         targetSelector: lastSelector,
         insertionStrategy: 'execCommand-insertText',
         visibleText: actual,
         visibleMatchesExpected: true,
+        errorDetail: `Post button stayed disabled after ${maxAttempts} attempts (selector: ${lastPostButtonSelector}).`,
       };
     }
   }

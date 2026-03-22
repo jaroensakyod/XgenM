@@ -32,6 +32,50 @@ export interface ComposerInsertionRuntime {
   sleep?: (ms: number) => Promise<void>;
 }
 
+function createKeyboardEvent(type: 'keydown' | 'keyup', chunk: string): Event {
+  const key = chunk === '\n'
+    ? 'Enter'
+    : chunk.length === 1
+      ? chunk
+      : 'Unidentified';
+
+  if (typeof KeyboardEvent === 'function') {
+    return new KeyboardEvent(type, {
+      bubbles: true,
+      cancelable: type === 'keydown',
+      key,
+    });
+  }
+
+  const event = new Event(type, {
+    bubbles: true,
+    cancelable: type === 'keydown',
+  });
+  Object.defineProperty(event, 'key', { value: key });
+  return event;
+}
+
+function createTypingInputEvent(type: 'beforeinput' | 'input', chunk: string): Event {
+  const init = {
+    bubbles: true,
+    cancelable: type === 'beforeinput',
+    data: chunk,
+    inputType: 'insertText',
+  };
+
+  if (typeof InputEvent === 'function') {
+    return new InputEvent(type, init);
+  }
+
+  const event = new Event(type, {
+    bubbles: true,
+    cancelable: type === 'beforeinput',
+  });
+  Object.defineProperty(event, 'data', { value: chunk });
+  Object.defineProperty(event, 'inputType', { value: 'insertText' });
+  return event;
+}
+
 export async function applyComposerTextInsertion(
   el: HTMLElement,
   text: string,
@@ -49,8 +93,16 @@ export async function applyComposerTextInsertion(
   execCommand('delete', false);
 
   for (const chunk of splitIntoTypingChunks(text)) {
-    execCommand('insertText', false, chunk);
-    el.dispatchEvent(new InputEvent('input', { bubbles: true, data: chunk }));
+    el.dispatchEvent(createKeyboardEvent('keydown', chunk));
+    const beforeInput = createTypingInputEvent('beforeinput', chunk);
+    const shouldInsert = el.dispatchEvent(beforeInput);
+
+    if (shouldInsert) {
+      execCommand('insertText', false, chunk);
+    }
+
+    el.dispatchEvent(createTypingInputEvent('input', chunk));
+    el.dispatchEvent(createKeyboardEvent('keyup', chunk));
     await wait(Math.min(220, Math.max(60, chunk.length * 18)));
   }
 
