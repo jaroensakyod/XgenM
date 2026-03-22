@@ -9,7 +9,6 @@ import type {
   RunMode,
   SourcePlatform,
 } from '@shared/types';
-import { isSubmitEligible, isDraftEligible } from '@shared/types';
 import type {
   ExtractionResultMessage,
   XActionResultMessage,
@@ -26,6 +25,7 @@ import { sleep } from '@shared/timing';
 import { ExtensionError } from '@shared/errors';
 import { openOrFocusTab, waitForTabLoad, sendToTab } from './tab-manager';
 import { loadSettings, saveLastJob, appendJobHistory } from './storage';
+import { runXPostSession } from './x-post-session';
 
 // ---------------------------------------------------------------------------
 // State
@@ -461,92 +461,25 @@ export async function startJob(
       log('Media uploaded successfully.');
     }
 
-    // ---- Phase 7: Fill composer ----
+    // ---- Phase 7+8: Compose + Post (delegated to x-post-session) ----
     currentJob.phase = 'filling-composer';
-    log(videoDataUrl ? 'Typing caption after media upload…' : 'Filling composer…');
     broadcast(currentJob);
 
-    const composeResult = await sendToTab<XActionResultMessage>(xTab.id, {
-      action: 'COMPOSE_POST',
-      text: postText,
-    });
+    const sessionOutcome = await runXPostSession(
+      xTab.id,
+      postText,
+      mode,
+      !!videoDataUrl,
+      { sendToTab, log },
+    );
 
-    if (!composeResult.success) {
-      throw new ExtensionError(
-        composeResult.error ?? 'Composer fill failed',
-        'X_COMPOSER_NOT_FOUND',
-      );
-    }
-
-    if (composeResult.evidence) {
-      log(`Compose proof: ${composeResult.evidence.proofStatus} (selector: ${composeResult.evidence.targetSelector})`);
-    }
-    log(videoDataUrl ? 'Caption typed after media upload.' : 'Text inserted into composer.');
-
-    // ---- Phase 8: Post or await review ----
-    if (mode === 'auto-post') {
-      currentJob.phase = 'posting';
-      log('Verifying caption before posting…');
-
-      const finalComposeResult = await sendToTab<XActionResultMessage>(xTab.id, {
-        action: 'COMPOSE_POST',
-        text: postText,
-      });
-
-      if (!finalComposeResult.success) {
-        throw new ExtensionError(
-          finalComposeResult.error ?? 'Final caption verification failed',
-          'X_COMPOSER_NOT_FOUND',
-          true,
-        );
-      }
-
-      // Evidence-based gating: auto-post requires submit-ready proof
-      if (finalComposeResult.evidence) {
-        log(`Final proof: ${finalComposeResult.evidence.proofStatus} (visible: "${finalComposeResult.evidence.visibleText.slice(0, 60)}")`);
-
-        if (!isSubmitEligible(finalComposeResult.evidence)) {
-          const proofStatus = finalComposeResult.evidence.proofStatus;
-          if (isDraftEligible(finalComposeResult.evidence)) {
-            log(`Proof status "${proofStatus}" insufficient for auto-post — stopping at draft review.`);
-            currentJob.phase = 'awaiting-review';
-            broadcast(currentJob);
-            appendJobHistory(currentJob);
-            return;
-          }
-          throw new ExtensionError(
-            `Compose proof failed: ${proofStatus}`,
-            'X_COMPOSER_NOT_FOUND',
-            true,
-          );
-        }
-      }
-
-      log('Caption verified before posting.');
-      log('Clicking Post…');
-      broadcast(currentJob);
-
-      const postResult = await sendToTab<XActionResultMessage>(xTab.id, {
-        action: 'CLICK_POST',
-      });
-
-      if (!postResult.success) {
-        throw new ExtensionError(
-          postResult.error ?? 'Post click failed',
-          'POST_BUTTON_UNAVAILABLE',
-          true,
-        );
-      }
-      log('Posted successfully!');
+    if (sessionOutcome.result === 'posted') {
+      currentJob.phase = 'completed';
+      log('Job completed.');
     } else {
+      // awaiting-review
       currentJob.phase = 'awaiting-review';
-      log('Draft ready — review and post manually when ready.');
-      broadcast(currentJob);
     }
-
-    // ---- Done ----
-    currentJob.phase = 'completed';
-    log('Job completed.');
     broadcast(currentJob);
     appendJobHistory(currentJob);
   } catch (err) {

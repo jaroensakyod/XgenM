@@ -9,9 +9,9 @@ import { DEFAULT_SETTINGS } from '@shared/types';
 //
 // Tests the orchestration order in job-runner.ts to validate that:
 // 1. UPLOAD_MEDIA is called before COMPOSE_POST
-// 2. Auto-post verifies caption via a second COMPOSE_POST before CLICK_POST
+// 2. Auto-post uses single COMPOSE_POST + evidence-based gating
 // 3. Prepare-draft mode never calls CLICK_POST
-// 4. False-positive compose success doesn't mask caption loss
+// 4. Evidence-based eligibility controls post/draft/fail outcomes
 // ---------------------------------------------------------------------------
 
 // ---- Module mocks ----
@@ -184,7 +184,7 @@ describe('auto-post orchestration sequence', () => {
     expect(firstComposeIndex).toBeGreaterThan(uploadIndex);
   });
 
-  it('calls COMPOSE_POST twice in auto-post mode (fill + verify)', async () => {
+  it('calls COMPOSE_POST once in auto-post mode (evidence-based gating)', async () => {
     mockSendToTab({
       UPLOAD_MEDIA: { action: 'X_ACTION_RESULT', step: 'upload', success: true },
       COMPOSE_POST: { action: 'X_ACTION_RESULT', step: 'compose', success: true },
@@ -198,10 +198,10 @@ describe('auto-post orchestration sequence', () => {
 
     const actions = getActionSequence();
     const composeCount = actions.filter((a) => a === 'COMPOSE_POST').length;
-    expect(composeCount).toBe(2);
+    expect(composeCount).toBe(1);
   });
 
-  it('calls CLICK_POST only after both compose calls succeed', async () => {
+  it('calls CLICK_POST only after compose succeeds', async () => {
     mockSendToTab({
       UPLOAD_MEDIA: { action: 'X_ACTION_RESULT', step: 'upload', success: true },
       COMPOSE_POST: { action: 'X_ACTION_RESULT', step: 'compose', success: true },
@@ -214,14 +214,13 @@ describe('auto-post orchestration sequence', () => {
     );
 
     const actions = getActionSequence();
-    const lastComposeIndex = actions.lastIndexOf('COMPOSE_POST');
+    const composeIndex = actions.indexOf('COMPOSE_POST');
     const clickPostIndex = actions.indexOf('CLICK_POST');
 
-    expect(clickPostIndex).toBeGreaterThan(lastComposeIndex);
+    expect(clickPostIndex).toBeGreaterThan(composeIndex);
   });
 
-  it('does NOT call CLICK_POST if final compose verification fails', async () => {
-    let composeCallCount = 0;
+  it('does NOT call CLICK_POST if compose fails', async () => {
     (sendToTab as Mock).mockImplementation(
       (_tabId: number, message: { action: string }) => {
         if (message.action === 'EXTRACT_SOURCE') {
@@ -245,16 +244,9 @@ describe('auto-post orchestration sequence', () => {
           });
         }
         if (message.action === 'COMPOSE_POST') {
-          composeCallCount += 1;
-          // First compose succeeds, second (verification) fails
-          if (composeCallCount === 1) {
-            return Promise.resolve({
-              action: 'X_ACTION_RESULT', step: 'compose', success: true,
-            });
-          }
           return Promise.resolve({
             action: 'X_ACTION_RESULT', step: 'compose', success: false,
-            error: 'Caption verification failed',
+            error: 'Composer fill failed',
           });
         }
         return Promise.resolve({
@@ -288,30 +280,9 @@ describe('auto-post orchestration sequence', () => {
       (c) => c.message.action === 'COMPOSE_POST',
     );
 
-    expect(composeCalls.length).toBe(2);
-    for (const call of composeCalls) {
-      expect(call.message.text).toBeDefined();
-      expect(call.message.text!.length).toBeGreaterThan(0);
-    }
-  });
-
-  it('sends identical text for both compose calls', async () => {
-    mockSendToTab({
-      UPLOAD_MEDIA: { action: 'X_ACTION_RESULT', step: 'upload', success: true },
-      COMPOSE_POST: { action: 'X_ACTION_RESULT', step: 'compose', success: true },
-      CLICK_POST: { action: 'X_ACTION_RESULT', step: 'post', success: true },
-    });
-
-    await startJob(
-      'https://www.tiktok.com/@user/video/123',
-      'auto-post',
-    );
-
-    const composeCalls = getSendToTabCalls().filter(
-      (c) => c.message.action === 'COMPOSE_POST',
-    );
-
-    expect(composeCalls[0].message.text).toBe(composeCalls[1].message.text);
+    expect(composeCalls.length).toBe(1);
+    expect(composeCalls[0].message.text).toBeDefined();
+    expect(composeCalls[0].message.text!.length).toBeGreaterThan(0);
   });
 });
 
@@ -359,7 +330,7 @@ describe('prepare-draft orchestration sequence', () => {
     );
 
     const job = getCurrentJob();
-    expect(job?.phase).toBe('completed');
+    expect(job?.phase).toBe('awaiting-review');
   });
 });
 
@@ -389,11 +360,10 @@ describe('upload failure handling', () => {
   });
 });
 
-describe('false-positive compose detection (characterization)', () => {
-  it('documents that compose success is based solely on sendToTab response', async () => {
-    // This characterization test documents the current behavior:
-    // compose "success" is whatever the content script returns.
-    // The orchestrator does NOT independently verify DOM truth.
+describe('evidence-based compose gating (Phase 3 — single compose)', () => {
+  it('documents that compose result is the single source of truth for eligibility', async () => {
+    // Phase 3: compose is called once. Evidence from that single call
+    // determines whether to post, stop at draft, or fail.
     mockSendToTab({
       UPLOAD_MEDIA: { action: 'X_ACTION_RESULT', step: 'upload', success: true },
       COMPOSE_POST: { action: 'X_ACTION_RESULT', step: 'compose', success: true },
@@ -402,45 +372,14 @@ describe('false-positive compose detection (characterization)', () => {
 
     await startJob('https://www.tiktok.com/@user/video/123', 'auto-post');
 
-    // Both compose calls return success, and the orchestrator trusts
-    // that response without any independent DOM read-back.
     const job = getCurrentJob();
     expect(job?.phase).toBe('completed');
 
-    // Key insight: if the content script falsely reports compose success
-    // (e.g., it reads text from a mirror node), the orchestrator has
-    // no mechanism to detect the false positive. This is one of the
-    // root-cause hypotheses for the missing-text bug.
     const composeCalls = getSendToTabCalls().filter(
       (c) => c.message.action === 'COMPOSE_POST',
     );
-    // Documenting: both calls carry text, but there's no independent
-    // verification channel sent back to the background.
-    expect(composeCalls.length).toBe(2);
-  });
-
-  it('documents that re-composing twice with same text does not test for DOM reset', async () => {
-    // In auto-post mode, the orchestrator calls COMPOSE_POST twice.
-    // However, both calls carry the same text. If the first compose
-    // succeeds but media upload causes X to remount the composer,
-    // the second compose re-inserts the text — masking a potential
-    // remount scenario. This test documents this behavior.
-    mockSendToTab({
-      UPLOAD_MEDIA: { action: 'X_ACTION_RESULT', step: 'upload', success: true },
-      COMPOSE_POST: { action: 'X_ACTION_RESULT', step: 'compose', success: true },
-      CLICK_POST: { action: 'X_ACTION_RESULT', step: 'post', success: true },
-    });
-
-    await startJob('https://www.tiktok.com/@user/video/123', 'auto-post');
-
-    const composeCalls = getSendToTabCalls().filter(
-      (c) => c.message.action === 'COMPOSE_POST',
-    );
-
-    // The second call re-inserts the text rather than read-only verifying,
-    // because ensureComposerText always calls insertText first.
-    // This means a remount would be silently masked by re-insertion.
-    expect(composeCalls[0].message.text).toBe(composeCalls[1].message.text);
+    // Single compose call — no double-compose
+    expect(composeCalls.length).toBe(1);
   });
 });
 
@@ -494,8 +433,7 @@ describe('evidence-based gating (Phase 1 contract)', () => {
     expect(getActionSequence()).toContain('CLICK_POST');
   });
 
-  it('auto-post stops at draft review when final evidence is visible-only', async () => {
-    let composeCallCount = 0;
+  it('auto-post stops at draft review when evidence is visible-only', async () => {
     (sendToTab as Mock).mockImplementation(
       (_tabId: number, message: { action: string }) => {
         if (message.action === 'EXTRACT_SOURCE') {
@@ -517,18 +455,16 @@ describe('evidence-based gating (Phase 1 contract)', () => {
           return Promise.resolve({ action: 'X_ACTION_RESULT', step: 'upload', success: true });
         }
         if (message.action === 'COMPOSE_POST') {
-          composeCallCount += 1;
-          // First compose returns draft-ready, second returns visible-only
           return Promise.resolve({
             action: 'X_ACTION_RESULT',
             step: 'compose',
             success: true,
             evidence: {
-              proofStatus: composeCallCount === 1 ? 'draft-ready' : 'visible-only',
+              proofStatus: 'visible-only',
               targetSelector: 'div[data-testid="tweetTextarea_0"]',
               insertionStrategy: 'execCommand-insertText',
               visibleText: 'Test caption',
-              visibleMatchesExpected: composeCallCount === 1,
+              visibleMatchesExpected: false,
             },
           });
         }
@@ -543,8 +479,7 @@ describe('evidence-based gating (Phase 1 contract)', () => {
     expect(getActionSequence()).not.toContain('CLICK_POST');
   });
 
-  it('auto-post fails when final evidence is proof-failed', async () => {
-    let composeCallCount = 0;
+  it('auto-post fails when evidence is proof-failed', async () => {
     (sendToTab as Mock).mockImplementation(
       (_tabId: number, message: { action: string }) => {
         if (message.action === 'EXTRACT_SOURCE') {
@@ -566,15 +501,6 @@ describe('evidence-based gating (Phase 1 contract)', () => {
           return Promise.resolve({ action: 'X_ACTION_RESULT', step: 'upload', success: true });
         }
         if (message.action === 'COMPOSE_POST') {
-          composeCallCount += 1;
-          if (composeCallCount === 1) {
-            return Promise.resolve({
-              action: 'X_ACTION_RESULT',
-              step: 'compose',
-              success: true,
-              evidence: { proofStatus: 'draft-ready', targetSelector: 'x', insertionStrategy: 'execCommand-insertText', visibleText: 'ok', visibleMatchesExpected: true },
-            });
-          }
           return Promise.resolve({
             action: 'X_ACTION_RESULT',
             step: 'compose',
