@@ -10,6 +10,8 @@ import {
   splitIntoTypingChunks,
 } from '@content/x/composer';
 import { COMPOSER_TEXT_SELECTORS } from '@content/x/selectors';
+import type { ComposeEvidence } from '@shared/types';
+import { isSubmitEligible, isDraftEligible } from '@shared/types';
 
 // ---------------------------------------------------------------------------
 // Phase 2: X Composer DOM Truth Characterization
@@ -486,5 +488,77 @@ describe('submit semantics probe layer', () => {
 
     expect(normalizeComposerText(editor.textContent ?? '')).toBe('Guard this caption');
     expect(hasSubmitStateEvidence('Guard this caption')).toBe(false);
+  });
+});
+
+// ---- Phase 1: Truth contract type validation ----
+
+describe('ComposeEvidence contract (Phase 1)', () => {
+  it('classifies visible-text-but-no-submit-proof as visible-only', async () => {
+    const evidence: ComposeEvidence = {
+      proofStatus: 'visible-only',
+      targetSelector: 'div[data-testid="tweetTextarea_0"]',
+      insertionStrategy: 'execCommand-insertText',
+      visibleText: 'Caption is visible',
+      visibleMatchesExpected: false,
+    };
+
+    expect(evidence.proofStatus).toBe('visible-only');
+    expect(evidence.proofStatus).not.toBe('submit-ready');
+  });
+
+  it('classifies successful insertion with visible match as draft-ready', () => {
+    const evidence: ComposeEvidence = {
+      proofStatus: 'draft-ready',
+      targetSelector: 'div[data-testid="tweetTextarea_0"]',
+      insertionStrategy: 'execCommand-insertText',
+      visibleText: 'Full caption text',
+      visibleMatchesExpected: true,
+    };
+
+    expect(evidence.proofStatus).toBe('draft-ready');
+    expect(evidence.visibleMatchesExpected).toBe(true);
+  });
+
+  it('classifies failed verification as proof-failed with error detail', () => {
+    const evidence: ComposeEvidence = {
+      proofStatus: 'proof-failed',
+      targetSelector: 'unknown',
+      insertionStrategy: 'execCommand-insertText',
+      visibleText: '',
+      visibleMatchesExpected: false,
+      errorDetail: 'Composer empty after 3 attempts.',
+    };
+
+    expect(evidence.proofStatus).toBe('proof-failed');
+    expect(evidence.errorDetail).toBeDefined();
+  });
+
+  it('isSubmitEligible returns true only for submit-ready', () => {
+    expect(isSubmitEligible({ proofStatus: 'submit-ready', targetSelector: '', insertionStrategy: 'execCommand-insertText', visibleText: 'x', visibleMatchesExpected: true })).toBe(true);
+    expect(isSubmitEligible({ proofStatus: 'draft-ready', targetSelector: '', insertionStrategy: 'execCommand-insertText', visibleText: 'x', visibleMatchesExpected: true })).toBe(false);
+    expect(isSubmitEligible({ proofStatus: 'visible-only', targetSelector: '', insertionStrategy: 'execCommand-insertText', visibleText: 'x', visibleMatchesExpected: false })).toBe(false);
+    expect(isSubmitEligible({ proofStatus: 'proof-failed', targetSelector: '', insertionStrategy: 'execCommand-insertText', visibleText: '', visibleMatchesExpected: false })).toBe(false);
+  });
+
+  it('isDraftEligible returns true for submit-ready, draft-ready, and visible-only', () => {
+    expect(isDraftEligible({ proofStatus: 'submit-ready', targetSelector: '', insertionStrategy: 'execCommand-insertText', visibleText: 'x', visibleMatchesExpected: true })).toBe(true);
+    expect(isDraftEligible({ proofStatus: 'draft-ready', targetSelector: '', insertionStrategy: 'execCommand-insertText', visibleText: 'x', visibleMatchesExpected: true })).toBe(true);
+    expect(isDraftEligible({ proofStatus: 'visible-only', targetSelector: '', insertionStrategy: 'execCommand-insertText', visibleText: 'x', visibleMatchesExpected: false })).toBe(true);
+    expect(isDraftEligible({ proofStatus: 'proof-failed', targetSelector: '', insertionStrategy: 'execCommand-insertText', visibleText: '', visibleMatchesExpected: false })).toBe(false);
+  });
+
+  it('legacy failure path maps to proof-failed without losing error detail', () => {
+    const evidence: ComposeEvidence = {
+      proofStatus: 'proof-failed',
+      targetSelector: 'none',
+      insertionStrategy: 'execCommand-insertText',
+      visibleText: '',
+      visibleMatchesExpected: false,
+      errorDetail: 'Not logged in to X.',
+    };
+
+    expect(evidence.proofStatus).toBe('proof-failed');
+    expect(evidence.errorDetail).toBe('Not logged in to X.');
   });
 });

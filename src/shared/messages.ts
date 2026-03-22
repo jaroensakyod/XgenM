@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import type {
+  ComposeEvidence,
   ExtractedSourceData,
   JobPhase,
   JobState,
@@ -78,6 +79,8 @@ export interface XActionResultMessage {
   step: 'compose' | 'upload' | 'post';
   success: boolean;
   error?: string;
+  /** Structured compose evidence (present only when step === 'compose') */
+  evidence?: ComposeEvidence;
 }
 
 export interface FetchVideoBlobMessage {

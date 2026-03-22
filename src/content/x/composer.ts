@@ -8,6 +8,10 @@ import type {
   ComposePostMessage,
   UploadMediaMessage,
 } from '@shared/messages';
+import type {
+  ComposeEvidence,
+  ComposeProofStatus,
+} from '@shared/types';
 import { waitForAnySelector, sleep } from '@shared/timing';
 import { ACTION_DELAY } from '@shared/constants';
 import {
@@ -174,25 +178,56 @@ async function insertText(text: string): Promise<void> {
   await applyComposerTextInsertion(el, text);
 }
 
-async function ensureComposerText(text: string, maxAttempts = 3): Promise<void> {
+async function ensureComposerText(text: string, maxAttempts = 3): Promise<ComposeEvidence> {
+  let lastSelector = 'unknown';
+  let lastVisibleText = '';
+
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     debugLog(`Ensuring caption is present (attempt ${attempt}/${maxAttempts}).`);
-    await insertText(text);
+
+    const match = await findBestComposer();
+    lastSelector = match.selector;
+    await applyComposerTextInsertion(match.element, text);
     await sleep(400);
 
     const actual = await readComposerText();
+    lastVisibleText = actual;
     debugLog(`Composer now has ${actual.length} normalized chars.`);
 
     if (matchesExpectedComposerText(actual, text)) {
       debugLog('Caption verification succeeded.');
-      return;
+      return {
+        proofStatus: 'draft-ready' as ComposeProofStatus,
+        targetSelector: lastSelector,
+        insertionStrategy: 'execCommand-insertText',
+        visibleText: actual,
+        visibleMatchesExpected: true,
+      };
     }
   }
 
   const actual = await readComposerText();
-  throw new Error(
-    `Caption verification failed. Expected text was not present in composer. Final composer text: ${actual.slice(0, 80)}`,
-  );
+  lastVisibleText = actual;
+
+  if (lastVisibleText.length > 0) {
+    return {
+      proofStatus: 'visible-only' as ComposeProofStatus,
+      targetSelector: lastSelector,
+      insertionStrategy: 'execCommand-insertText',
+      visibleText: lastVisibleText,
+      visibleMatchesExpected: false,
+      errorDetail: `Caption verification failed. Final composer text: ${lastVisibleText.slice(0, 80)}`,
+    };
+  }
+
+  return {
+    proofStatus: 'proof-failed' as ComposeProofStatus,
+    targetSelector: lastSelector,
+    insertionStrategy: 'execCommand-insertText',
+    visibleText: '',
+    visibleMatchesExpected: false,
+    errorDetail: `Caption verification failed. Composer empty after ${maxAttempts} attempts.`,
+  };
 }
 
 /**
@@ -239,12 +274,14 @@ chrome.runtime.onMessage.addListener(
       step: XActionResultMessage['step'],
       success: boolean,
       error?: string,
+      evidence?: ComposeEvidence,
     ) => {
       const result: XActionResultMessage = {
         action: 'X_ACTION_RESULT',
         step,
         success,
         error,
+        evidence,
       };
       sendResponse(result);
     };
@@ -255,15 +292,38 @@ chrome.runtime.onMessage.addListener(
         const { text } = message as ComposePostMessage;
 
         if (!isLoggedIn()) {
-          respond('compose', false, 'Not logged in to X.');
+          respond('compose', false, 'Not logged in to X.', {
+            proofStatus: 'proof-failed',
+            targetSelector: 'none',
+            insertionStrategy: 'execCommand-insertText',
+            visibleText: '',
+            visibleMatchesExpected: false,
+            errorDetail: 'Not logged in to X.',
+          });
           return true;
         }
 
         ensureComposerText(text)
-          .then(() => respond('compose', true))
+          .then((evidence) => {
+            const success = evidence.proofStatus !== 'proof-failed';
+            respond(
+              'compose',
+              success,
+              success ? undefined : evidence.errorDetail,
+              evidence,
+            );
+          })
           .catch((err) => {
-            debugLog(`Caption compose failed: ${err instanceof Error ? err.message : String(err)}`);
-            respond('compose', false, err instanceof Error ? err.message : String(err));
+            const errorMsg = err instanceof Error ? err.message : String(err);
+            debugLog(`Caption compose failed: ${errorMsg}`);
+            respond('compose', false, errorMsg, {
+              proofStatus: 'proof-failed',
+              targetSelector: 'unknown',
+              insertionStrategy: 'execCommand-insertText',
+              visibleText: '',
+              visibleMatchesExpected: false,
+              errorDetail: errorMsg,
+            });
           });
         return true;
       }

@@ -443,3 +443,167 @@ describe('false-positive compose detection (characterization)', () => {
     expect(composeCalls[0].message.text).toBe(composeCalls[1].message.text);
   });
 });
+
+describe('evidence-based gating (Phase 1 contract)', () => {
+  it('auto-post proceeds when final evidence is submit-ready', async () => {
+    (sendToTab as Mock).mockImplementation(
+      (_tabId: number, message: { action: string }) => {
+        if (message.action === 'EXTRACT_SOURCE') {
+          return Promise.resolve({
+            action: 'EXTRACTION_RESULT',
+            success: true,
+            data: {
+              platform: 'tiktok',
+              sourceUrl: 'https://www.tiktok.com/@user/video/123',
+              captionRaw: 'Test caption #fyp',
+              hashtags: ['#fyp'],
+              videoUrl: 'https://v16.tiktokcdn.com/video.mp4',
+              videoMimeType: 'video/mp4',
+              extractionMethod: 'embedded-state',
+            },
+          });
+        }
+        if (message.action === 'UPLOAD_MEDIA') {
+          return Promise.resolve({ action: 'X_ACTION_RESULT', step: 'upload', success: true });
+        }
+        if (message.action === 'COMPOSE_POST') {
+          return Promise.resolve({
+            action: 'X_ACTION_RESULT',
+            step: 'compose',
+            success: true,
+            evidence: {
+              proofStatus: 'submit-ready',
+              targetSelector: 'div[data-testid="tweetTextarea_0"]',
+              insertionStrategy: 'execCommand-insertText',
+              visibleText: 'Test caption',
+              visibleMatchesExpected: true,
+            },
+          });
+        }
+        if (message.action === 'CLICK_POST') {
+          return Promise.resolve({ action: 'X_ACTION_RESULT', step: 'post', success: true });
+        }
+        return Promise.resolve({ action: 'X_ACTION_RESULT', step: 'compose', success: false });
+      },
+    );
+
+    await startJob('https://www.tiktok.com/@user/video/123', 'auto-post');
+
+    const job = getCurrentJob();
+    expect(job?.phase).toBe('completed');
+    expect(getActionSequence()).toContain('CLICK_POST');
+  });
+
+  it('auto-post stops at draft review when final evidence is visible-only', async () => {
+    let composeCallCount = 0;
+    (sendToTab as Mock).mockImplementation(
+      (_tabId: number, message: { action: string }) => {
+        if (message.action === 'EXTRACT_SOURCE') {
+          return Promise.resolve({
+            action: 'EXTRACTION_RESULT',
+            success: true,
+            data: {
+              platform: 'tiktok',
+              sourceUrl: 'https://www.tiktok.com/@user/video/123',
+              captionRaw: 'Test caption #fyp',
+              hashtags: ['#fyp'],
+              videoUrl: 'https://v16.tiktokcdn.com/video.mp4',
+              videoMimeType: 'video/mp4',
+              extractionMethod: 'embedded-state',
+            },
+          });
+        }
+        if (message.action === 'UPLOAD_MEDIA') {
+          return Promise.resolve({ action: 'X_ACTION_RESULT', step: 'upload', success: true });
+        }
+        if (message.action === 'COMPOSE_POST') {
+          composeCallCount += 1;
+          // First compose returns draft-ready, second returns visible-only
+          return Promise.resolve({
+            action: 'X_ACTION_RESULT',
+            step: 'compose',
+            success: true,
+            evidence: {
+              proofStatus: composeCallCount === 1 ? 'draft-ready' : 'visible-only',
+              targetSelector: 'div[data-testid="tweetTextarea_0"]',
+              insertionStrategy: 'execCommand-insertText',
+              visibleText: 'Test caption',
+              visibleMatchesExpected: composeCallCount === 1,
+            },
+          });
+        }
+        return Promise.resolve({ action: 'X_ACTION_RESULT', step: 'compose', success: false });
+      },
+    );
+
+    await startJob('https://www.tiktok.com/@user/video/123', 'auto-post');
+
+    const job = getCurrentJob();
+    expect(job?.phase).toBe('awaiting-review');
+    expect(getActionSequence()).not.toContain('CLICK_POST');
+  });
+
+  it('auto-post fails when final evidence is proof-failed', async () => {
+    let composeCallCount = 0;
+    (sendToTab as Mock).mockImplementation(
+      (_tabId: number, message: { action: string }) => {
+        if (message.action === 'EXTRACT_SOURCE') {
+          return Promise.resolve({
+            action: 'EXTRACTION_RESULT',
+            success: true,
+            data: {
+              platform: 'tiktok',
+              sourceUrl: 'https://www.tiktok.com/@user/video/123',
+              captionRaw: 'Test caption #fyp',
+              hashtags: ['#fyp'],
+              videoUrl: 'https://v16.tiktokcdn.com/video.mp4',
+              videoMimeType: 'video/mp4',
+              extractionMethod: 'embedded-state',
+            },
+          });
+        }
+        if (message.action === 'UPLOAD_MEDIA') {
+          return Promise.resolve({ action: 'X_ACTION_RESULT', step: 'upload', success: true });
+        }
+        if (message.action === 'COMPOSE_POST') {
+          composeCallCount += 1;
+          if (composeCallCount === 1) {
+            return Promise.resolve({
+              action: 'X_ACTION_RESULT',
+              step: 'compose',
+              success: true,
+              evidence: { proofStatus: 'draft-ready', targetSelector: 'x', insertionStrategy: 'execCommand-insertText', visibleText: 'ok', visibleMatchesExpected: true },
+            });
+          }
+          return Promise.resolve({
+            action: 'X_ACTION_RESULT',
+            step: 'compose',
+            success: true,
+            evidence: { proofStatus: 'proof-failed', targetSelector: 'x', insertionStrategy: 'execCommand-insertText', visibleText: '', visibleMatchesExpected: false, errorDetail: 'Composer empty' },
+          });
+        }
+        return Promise.resolve({ action: 'X_ACTION_RESULT', step: 'compose', success: false });
+      },
+    );
+
+    await startJob('https://www.tiktok.com/@user/video/123', 'auto-post');
+
+    const job = getCurrentJob();
+    expect(job?.phase).toBe('failed');
+    expect(getActionSequence()).not.toContain('CLICK_POST');
+  });
+
+  it('backward-compatible: auto-post still works when no evidence is returned', async () => {
+    mockSendToTab({
+      UPLOAD_MEDIA: { action: 'X_ACTION_RESULT', step: 'upload', success: true },
+      COMPOSE_POST: { action: 'X_ACTION_RESULT', step: 'compose', success: true },
+      CLICK_POST: { action: 'X_ACTION_RESULT', step: 'post', success: true },
+    });
+
+    await startJob('https://www.tiktok.com/@user/video/123', 'auto-post');
+
+    const job = getCurrentJob();
+    expect(job?.phase).toBe('completed');
+    expect(getActionSequence()).toContain('CLICK_POST');
+  });
+});

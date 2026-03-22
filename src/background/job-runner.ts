@@ -9,6 +9,7 @@ import type {
   RunMode,
   SourcePlatform,
 } from '@shared/types';
+import { isSubmitEligible, isDraftEligible } from '@shared/types';
 import type {
   ExtractionResultMessage,
   XActionResultMessage,
@@ -476,6 +477,10 @@ export async function startJob(
         'X_COMPOSER_NOT_FOUND',
       );
     }
+
+    if (composeResult.evidence) {
+      log(`Compose proof: ${composeResult.evidence.proofStatus} (selector: ${composeResult.evidence.targetSelector})`);
+    }
     log(videoDataUrl ? 'Caption typed after media upload.' : 'Text inserted into composer.');
 
     // ---- Phase 8: Post or await review ----
@@ -494,6 +499,27 @@ export async function startJob(
           'X_COMPOSER_NOT_FOUND',
           true,
         );
+      }
+
+      // Evidence-based gating: auto-post requires submit-ready proof
+      if (finalComposeResult.evidence) {
+        log(`Final proof: ${finalComposeResult.evidence.proofStatus} (visible: "${finalComposeResult.evidence.visibleText.slice(0, 60)}")`);
+
+        if (!isSubmitEligible(finalComposeResult.evidence)) {
+          const proofStatus = finalComposeResult.evidence.proofStatus;
+          if (isDraftEligible(finalComposeResult.evidence)) {
+            log(`Proof status "${proofStatus}" insufficient for auto-post — stopping at draft review.`);
+            currentJob.phase = 'awaiting-review';
+            broadcast(currentJob);
+            appendJobHistory(currentJob);
+            return;
+          }
+          throw new ExtensionError(
+            `Compose proof failed: ${proofStatus}`,
+            'X_COMPOSER_NOT_FOUND',
+            true,
+          );
+        }
       }
 
       log('Caption verified before posting.');

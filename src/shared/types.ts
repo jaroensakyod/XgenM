@@ -68,6 +68,44 @@ export interface JobState {
 }
 
 // ---------------------------------------------------------------------------
+// X Compose / Post evidence contract
+// ---------------------------------------------------------------------------
+
+/** Proof status classifying how reliably the composer state was verified */
+export type ComposeProofStatus =
+  | 'visible-only'   // Text appears in DOM but no submit-state evidence
+  | 'draft-ready'    // Text verified and insertion acknowledged, safe for review
+  | 'submit-ready'   // Full evidence: visible + tracked editor state matches
+  | 'proof-failed';  // Verification attempted but failed
+
+/** Structured evidence returned by the X content script after compose */
+export interface ComposeEvidence {
+  proofStatus: ComposeProofStatus;
+  /** The selector strategy used to locate the composer */
+  targetSelector: string;
+  /** The insertion strategy that was applied */
+  insertionStrategy: 'execCommand-insertText';
+  /** Normalized visible text read back from the composer */
+  visibleText: string;
+  /** Whether the visible text matches the expected text */
+  visibleMatchesExpected: boolean;
+  /** Optional error detail if proof-failed */
+  errorDetail?: string;
+}
+
+/** Determines whether an evidence object meets the threshold for auto-posting */
+export function isSubmitEligible(evidence: ComposeEvidence): boolean {
+  return evidence.proofStatus === 'submit-ready';
+}
+
+/** Determines whether evidence is at least good enough for draft review */
+export function isDraftEligible(evidence: ComposeEvidence): boolean {
+  return evidence.proofStatus === 'submit-ready'
+    || evidence.proofStatus === 'draft-ready'
+    || evidence.proofStatus === 'visible-only';
+}
+
+// ---------------------------------------------------------------------------
 // Settings persisted in chrome.storage.local
 // ---------------------------------------------------------------------------
 
