@@ -1,5 +1,11 @@
 // ---------------------------------------------------------------------------
-// composer.ts — X content script: compose text, upload media, click post
+// composer.ts — X content script entry point: message listener
+//
+// Decomposed modules:
+//   composer-target.ts  — DOM target discovery and scoring
+//   composer-write.ts   — Text insertion and normalization
+//   composer-proof.ts   — Compose verification and evidence
+//   composer-submit.ts  — Post button interaction
 // ---------------------------------------------------------------------------
 
 import type {
@@ -8,260 +14,38 @@ import type {
   ComposePostMessage,
   UploadMediaMessage,
 } from '@shared/messages';
-import type {
-  ComposeEvidence,
-  ComposeProofStatus,
-} from '@shared/types';
-import { waitForAnySelector, sleep } from '@shared/timing';
-import { ACTION_DELAY } from '@shared/constants';
-import {
-  COMPOSER_TEXT_SELECTORS,
-  POST_BUTTON_SELECTORS,
-  LOGIN_WALL_SELECTORS,
-} from './selectors';
+import type { ComposeEvidence } from '@shared/types';
+import { LOGIN_WALL_SELECTORS } from './selectors';
 import { attachMedia, waitForUploadComplete } from './upload';
+import { ensureComposerText } from './composer-proof';
+import { clickPost } from './composer-submit';
+
+// Re-export decomposed modules for backward-compatible test imports
+export {
+  isVisibleComposer,
+  resolveEditableComposer,
+  scoreComposer,
+} from './composer-target';
+export {
+  normalizeComposerText,
+  matchesExpectedComposerText,
+  splitIntoTypingChunks,
+  applyComposerTextInsertion,
+} from './composer-write';
+export type { ComposerInsertionRuntime } from './composer-write';
 
 function debugLog(text: string): void {
   chrome.runtime.sendMessage({
     action: 'LOG',
     text: `[x] ${text}`,
-    phase: 'uploading-media',
-  }).catch(() => {
-    // Best-effort diagnostics only.
-  });
+    phase: 'filling-composer',
+  }).catch(() => {});
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function isLoggedIn(): boolean {
   return !LOGIN_WALL_SELECTORS.some(
     (sel) => document.querySelector(sel) !== null,
   );
-}
-
-export function normalizeComposerText(text: string): string {
-  return text
-    .replace(/\u00a0/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-export function isVisibleComposer(el: HTMLElement): boolean {
-  const style = window.getComputedStyle(el);
-  return style.display !== 'none' &&
-    style.visibility !== 'hidden' &&
-    el.getClientRects().length > 0;
-}
-
-export function resolveEditableComposer(el: HTMLElement): HTMLElement | null {
-  if (el.isContentEditable || el.getAttribute('role') === 'textbox') {
-    return el;
-  }
-
-  return el.querySelector<HTMLElement>(
-    '[contenteditable="true"][role="textbox"], [contenteditable="true"], [role="textbox"]',
-  );
-}
-
-export function scoreComposer(el: HTMLElement): number {
-  const rect = el.getBoundingClientRect();
-  const area = rect.width * rect.height;
-  const focused = document.activeElement === el || el.contains(document.activeElement);
-  const editableBonus = el.isContentEditable ? 2_000_000 : 0;
-  const textboxBonus = el.getAttribute('role') === 'textbox' ? 1_000_000 : 0;
-  return area + editableBonus + textboxBonus + (focused ? 3_000_000 : 0);
-}
-
-async function findBestComposer(): Promise<{ element: HTMLElement; selector: string }> {
-  const deadline = Date.now() + 15_000;
-
-  while (Date.now() < deadline) {
-    const candidates: Array<{ element: HTMLElement; selector: string }> = [];
-
-    for (const selector of COMPOSER_TEXT_SELECTORS) {
-      const elements = Array.from(document.querySelectorAll<HTMLElement>(selector));
-
-      for (const element of elements) {
-        const editable = resolveEditableComposer(element);
-        if (!editable || !isVisibleComposer(editable)) continue;
-        candidates.push({ element: editable, selector });
-      }
-    }
-
-    if (candidates.length > 0) {
-      const deduped = candidates.filter((candidate, index, list) =>
-        list.findIndex((item) => item.element === candidate.element) === index,
-      );
-
-      deduped.sort((a, b) => scoreComposer(b.element) - scoreComposer(a.element));
-      const best = deduped[0];
-      debugLog(
-        `Selected visible composer with selector ${best.selector} from ${deduped.length} candidate(s). ` +
-          `editable=${best.element.isContentEditable} role=${best.element.getAttribute('role') ?? ''}`,
-      );
-      return best;
-    }
-
-    await sleep(300);
-  }
-
-  throw new Error('Composer text area not found.');
-}
-
-async function getComposerElement(): Promise<HTMLElement> {
-  const match = await findBestComposer();
-  return match.element;
-}
-
-async function readComposerText(): Promise<string> {
-  const composer = await getComposerElement();
-  const raw = composer.innerText || composer.textContent || '';
-  const normalized = normalizeComposerText(raw);
-  debugLog(`Read composer text sample: "${normalized.slice(0, 80)}"`);
-  return normalized;
-}
-
-export function matchesExpectedComposerText(actual: string, expected: string): boolean {
-  const normalizedExpected = normalizeComposerText(expected);
-  if (!normalizedExpected) return actual.length > 0;
-
-  return actual === normalizedExpected || actual.includes(normalizedExpected);
-}
-
-export function splitIntoTypingChunks(text: string): string[] {
-  const matches = text.match(/\S+\s*|\n+/g);
-  return matches && matches.length > 0 ? matches : [text];
-}
-
-export interface ComposerInsertionRuntime {
-  execCommand?: (
-    commandId: string,
-    showUI?: boolean,
-    value?: string,
-  ) => boolean;
-  sleep?: (ms: number) => Promise<void>;
-}
-
-export async function applyComposerTextInsertion(
-  el: HTMLElement,
-  text: string,
-  runtime: ComposerInsertionRuntime = {},
-): Promise<void> {
-  const execCommand = runtime.execCommand
-    ?? ((commandId: string, showUI?: boolean, value?: string) =>
-      document.execCommand(commandId, showUI ?? false, value));
-  const wait = runtime.sleep ?? sleep;
-
-  el.focus();
-  await wait(200);
-
-  execCommand('selectAll', false);
-  execCommand('delete', false);
-
-  for (const chunk of splitIntoTypingChunks(text)) {
-    execCommand('insertText', false, chunk);
-    el.dispatchEvent(new InputEvent('input', { bubbles: true, data: chunk }));
-    await wait(Math.min(220, Math.max(60, chunk.length * 18)));
-  }
-
-  el.dispatchEvent(new Event('change', { bubbles: true }));
-}
-
-/**
- * Insert text into X's contenteditable composer.
- * Dispatches the same input events the real UI would produce.
- */
-async function insertText(text: string): Promise<void> {
-  const el = await getComposerElement();
-  await applyComposerTextInsertion(el, text);
-}
-
-async function ensureComposerText(text: string, maxAttempts = 3): Promise<ComposeEvidence> {
-  let lastSelector = 'unknown';
-  let lastVisibleText = '';
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    debugLog(`Ensuring caption is present (attempt ${attempt}/${maxAttempts}).`);
-
-    const match = await findBestComposer();
-    lastSelector = match.selector;
-    await applyComposerTextInsertion(match.element, text);
-    await sleep(400);
-
-    const actual = await readComposerText();
-    lastVisibleText = actual;
-    debugLog(`Composer now has ${actual.length} normalized chars.`);
-
-    if (matchesExpectedComposerText(actual, text)) {
-      debugLog('Caption verification succeeded.');
-      return {
-        proofStatus: 'draft-ready' as ComposeProofStatus,
-        targetSelector: lastSelector,
-        insertionStrategy: 'execCommand-insertText',
-        visibleText: actual,
-        visibleMatchesExpected: true,
-      };
-    }
-  }
-
-  const actual = await readComposerText();
-  lastVisibleText = actual;
-
-  if (lastVisibleText.length > 0) {
-    return {
-      proofStatus: 'visible-only' as ComposeProofStatus,
-      targetSelector: lastSelector,
-      insertionStrategy: 'execCommand-insertText',
-      visibleText: lastVisibleText,
-      visibleMatchesExpected: false,
-      errorDetail: `Caption verification failed. Final composer text: ${lastVisibleText.slice(0, 80)}`,
-    };
-  }
-
-  return {
-    proofStatus: 'proof-failed' as ComposeProofStatus,
-    targetSelector: lastSelector,
-    insertionStrategy: 'execCommand-insertText',
-    visibleText: '',
-    visibleMatchesExpected: false,
-    errorDetail: `Caption verification failed. Composer empty after ${maxAttempts} attempts.`,
-  };
-}
-
-/**
- * Click the Post / Tweet button.
- */
-async function clickPost(): Promise<void> {
-  await sleep(ACTION_DELAY);
-
-  const match = await waitForAnySelector<HTMLElement>(
-    POST_BUTTON_SELECTORS,
-  );
-
-  if (!match) {
-    throw new Error('Post button not found.');
-  }
-
-  const button = match.element;
-
-  // Check if button is disabled (e.g. upload still processing)
-  if (
-    button.getAttribute('aria-disabled') === 'true' ||
-    (button as HTMLButtonElement).disabled
-  ) {
-    // Wait a bit and retry
-    await sleep(2000);
-    if (
-      button.getAttribute('aria-disabled') === 'true' ||
-      (button as HTMLButtonElement).disabled
-    ) {
-      throw new Error('Post button is disabled — upload may still be processing.');
-    }
-  }
-
-  button.click();
 }
 
 // ---------------------------------------------------------------------------
