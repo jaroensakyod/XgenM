@@ -4,6 +4,8 @@
 
 import { sleep } from '@shared/timing';
 
+const INSERT_TEXT_INPUT_TYPE = 'insertText';
+
 export function normalizeComposerText(text: string): string {
   return text
     .replace(/\u00a0/g, ' ')
@@ -32,6 +34,66 @@ export interface ComposerInsertionRuntime {
   sleep?: (ms: number) => Promise<void>;
 }
 
+function defineEventProperties<T extends Event>(
+  event: T,
+  properties: Record<string, unknown>,
+): T {
+  for (const [key, value] of Object.entries(properties)) {
+    Object.defineProperty(event, key, {
+      value,
+      configurable: true,
+      enumerable: true,
+    });
+  }
+
+  return event;
+}
+
+function createKeyboardEvent(type: 'keydown' | 'keyup', chunk: string): Event {
+  let key = 'Unidentified';
+  if (chunk === '\n') {
+    key = 'Enter';
+  } else if (chunk.length === 1) {
+    key = chunk;
+  }
+
+  if (typeof KeyboardEvent === 'function') {
+    return new KeyboardEvent(type, {
+      bubbles: true,
+      cancelable: type === 'keydown',
+      key,
+    });
+  }
+
+  const event = new Event(type, {
+    bubbles: true,
+    cancelable: type === 'keydown',
+  });
+  return defineEventProperties(event, { key });
+}
+
+function createTypingInputEvent(type: 'beforeinput' | 'input', chunk: string): Event {
+  const init = {
+    bubbles: true,
+    cancelable: type === 'beforeinput',
+    data: chunk,
+    inputType: INSERT_TEXT_INPUT_TYPE,
+  };
+
+  if (typeof InputEvent === 'function') {
+    return new InputEvent(type, init);
+  }
+
+  const event = new Event(type, {
+    bubbles: true,
+    cancelable: type === 'beforeinput',
+  });
+  return defineEventProperties(event, {
+    data: chunk,
+    inputType: INSERT_TEXT_INPUT_TYPE,
+  });
+}
+
 export async function applyComposerTextInsertion(
   el: HTMLElement,
   text: string,
@@ -49,8 +111,16 @@ export async function applyComposerTextInsertion(
   execCommand('delete', false);
 
   for (const chunk of splitIntoTypingChunks(text)) {
-    execCommand('insertText', false, chunk);
-    el.dispatchEvent(new InputEvent('input', { bubbles: true, data: chunk }));
+    el.dispatchEvent(createKeyboardEvent('keydown', chunk));
+    const beforeInput = createTypingInputEvent('beforeinput', chunk);
+    const shouldInsert = el.dispatchEvent(beforeInput);
+
+    if (shouldInsert) {
+      execCommand('insertText', false, chunk);
+    }
+
+    el.dispatchEvent(createTypingInputEvent('input', chunk));
+    el.dispatchEvent(createKeyboardEvent('keyup', chunk));
     await wait(Math.min(220, Math.max(60, chunk.length * 18)));
   }
 

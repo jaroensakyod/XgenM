@@ -7,11 +7,12 @@
 
 /** Selectors for the main tweet composer text area */
 export const COMPOSER_TEXT_SELECTORS = [
-  'div[data-testid="tweetTextarea_0"] div[role="textbox"]',
-  'div[data-testid="tweetTextarea_0"]',
+  '[data-testid="tweetTextarea_0"]',
+  '[data-testid="tweetTextarea_0"] div[role="textbox"]',
   'div[role="textbox"][data-testid="tweetTextarea_0"]',
   'div.public-DraftEditor-content[role="textbox"]',
   'div[contenteditable="true"][role="textbox"]',
+  'div[contenteditable="true"]',
 ];
 
 /** Selectors for the media upload file input */
