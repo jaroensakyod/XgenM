@@ -87,7 +87,7 @@ export async function ensureComposerText(
         return {
           proofStatus: 'submit-ready' as ComposeProofStatus,
           targetSelector: lastSelector,
-          insertionStrategy: 'execCommand-insertText',
+          insertionStrategy: 'paste-execCommand-input',
           visibleText: actual,
           visibleMatchesExpected: true,
         };
@@ -102,7 +102,7 @@ export async function ensureComposerText(
       return {
         proofStatus: 'draft-ready' as ComposeProofStatus,
         targetSelector: lastSelector,
-        insertionStrategy: 'execCommand-insertText',
+        insertionStrategy: 'paste-execCommand-input',
         visibleText: actual,
         visibleMatchesExpected: true,
         errorDetail:
@@ -119,7 +119,7 @@ export async function ensureComposerText(
     return {
       proofStatus: 'visible-only' as ComposeProofStatus,
       targetSelector: lastSelector,
-      insertionStrategy: 'execCommand-insertText',
+      insertionStrategy: 'paste-execCommand-input',
       visibleText: lastVisibleText,
       visibleMatchesExpected: false,
       errorDetail: `Caption verification failed. Final composer text: ${lastVisibleText.slice(0, 80)}`,
@@ -129,7 +129,7 @@ export async function ensureComposerText(
   return {
     proofStatus: 'proof-failed' as ComposeProofStatus,
     targetSelector: lastSelector,
-    insertionStrategy: 'execCommand-insertText',
+    insertionStrategy: 'paste-execCommand-input',
     visibleText: '',
     visibleMatchesExpected: false,
     errorDetail: `Caption verification failed. Composer empty after ${maxAttempts} attempts.`,

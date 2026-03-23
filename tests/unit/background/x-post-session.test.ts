@@ -16,7 +16,7 @@ describe('evaluatePostEligibility', () => {
     const evidence: ComposeEvidence = {
       proofStatus: 'submit-ready',
       targetSelector: 'x',
-      insertionStrategy: 'execCommand-insertText',
+      insertionStrategy: 'paste-execCommand-input',
       visibleText: 'ok',
       visibleMatchesExpected: true,
     };
@@ -31,7 +31,7 @@ describe('evaluatePostEligibility', () => {
     const evidence: ComposeEvidence = {
       proofStatus: 'submit-ready',
       targetSelector: 'x',
-      insertionStrategy: 'execCommand-insertText',
+      insertionStrategy: 'paste-execCommand-input',
       visibleText: 'ok',
       visibleMatchesExpected: true,
     };
@@ -42,7 +42,7 @@ describe('evaluatePostEligibility', () => {
     const evidence: ComposeEvidence = {
       proofStatus: 'draft-ready',
       targetSelector: 'x',
-      insertionStrategy: 'execCommand-insertText',
+      insertionStrategy: 'paste-execCommand-input',
       visibleText: 'ok',
       visibleMatchesExpected: true,
     };
@@ -53,7 +53,7 @@ describe('evaluatePostEligibility', () => {
     const evidence: ComposeEvidence = {
       proofStatus: 'visible-only',
       targetSelector: 'x',
-      insertionStrategy: 'execCommand-insertText',
+      insertionStrategy: 'paste-execCommand-input',
       visibleText: 'some text',
       visibleMatchesExpected: false,
     };
@@ -64,7 +64,7 @@ describe('evaluatePostEligibility', () => {
     const evidence: ComposeEvidence = {
       proofStatus: 'proof-failed',
       targetSelector: 'x',
-      insertionStrategy: 'execCommand-insertText',
+      insertionStrategy: 'paste-execCommand-input',
       visibleText: '',
       visibleMatchesExpected: false,
       errorDetail: 'empty',
@@ -96,7 +96,7 @@ describe('runXPostSession', () => {
         evidence: {
           proofStatus: 'submit-ready',
           targetSelector: 'x',
-          insertionStrategy: 'execCommand-insertText',
+          insertionStrategy: 'paste-execCommand-input',
           visibleText: 'hello',
           visibleMatchesExpected: true,
         },
@@ -129,7 +129,7 @@ describe('runXPostSession', () => {
       evidence: {
         proofStatus: 'visible-only',
         targetSelector: 'x',
-        insertionStrategy: 'execCommand-insertText',
+        insertionStrategy: 'paste-execCommand-input',
         visibleText: 'hello',
         visibleMatchesExpected: false,
       },
@@ -157,7 +157,7 @@ describe('runXPostSession', () => {
       evidence: {
         proofStatus: 'proof-failed',
         targetSelector: 'x',
-        insertionStrategy: 'execCommand-insertText',
+        insertionStrategy: 'paste-execCommand-input',
         visibleText: '',
         visibleMatchesExpected: false,
         errorDetail: 'empty',
@@ -182,7 +182,7 @@ describe('runXPostSession', () => {
       evidence: {
         proofStatus: 'submit-ready',
         targetSelector: 'x',
-        insertionStrategy: 'execCommand-insertText',
+        insertionStrategy: 'paste-execCommand-input',
         visibleText: 'hello',
         visibleMatchesExpected: true,
       },

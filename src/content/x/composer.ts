@@ -29,7 +29,6 @@ export {
 export {
   normalizeComposerText,
   matchesExpectedComposerText,
-  splitIntoTypingChunks,
   applyComposerTextInsertion,
 } from './composer-write';
 export type { ComposerInsertionRuntime } from './composer-write';
@@ -79,7 +78,7 @@ chrome.runtime.onMessage.addListener(
           respond('compose', false, 'Not logged in to X.', {
             proofStatus: 'proof-failed',
             targetSelector: 'none',
-            insertionStrategy: 'execCommand-insertText',
+            insertionStrategy: 'paste-execCommand-input',
             visibleText: '',
             visibleMatchesExpected: false,
             errorDetail: 'Not logged in to X.',
@@ -103,7 +102,7 @@ chrome.runtime.onMessage.addListener(
             respond('compose', false, errorMsg, {
               proofStatus: 'proof-failed',
               targetSelector: 'unknown',
-              insertionStrategy: 'execCommand-insertText',
+              insertionStrategy: 'paste-execCommand-input',
               visibleText: '',
               visibleMatchesExpected: false,
               errorDetail: errorMsg,

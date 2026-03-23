@@ -413,7 +413,7 @@ describe('evidence-based gating (Phase 1 contract)', () => {
             evidence: {
               proofStatus: 'submit-ready',
               targetSelector: 'div[data-testid="tweetTextarea_0"]',
-              insertionStrategy: 'execCommand-insertText',
+              insertionStrategy: 'paste-execCommand-input',
               visibleText: 'Test caption',
               visibleMatchesExpected: true,
             },
@@ -462,7 +462,7 @@ describe('evidence-based gating (Phase 1 contract)', () => {
             evidence: {
               proofStatus: 'visible-only',
               targetSelector: 'div[data-testid="tweetTextarea_0"]',
-              insertionStrategy: 'execCommand-insertText',
+              insertionStrategy: 'paste-execCommand-input',
               visibleText: 'Test caption',
               visibleMatchesExpected: false,
             },
@@ -505,7 +505,7 @@ describe('evidence-based gating (Phase 1 contract)', () => {
             action: 'X_ACTION_RESULT',
             step: 'compose',
             success: true,
-            evidence: { proofStatus: 'proof-failed', targetSelector: 'x', insertionStrategy: 'execCommand-insertText', visibleText: '', visibleMatchesExpected: false, errorDetail: 'Composer empty' },
+            evidence: { proofStatus: 'proof-failed', targetSelector: 'x', insertionStrategy: 'paste-execCommand-input', visibleText: '', visibleMatchesExpected: false, errorDetail: 'Composer empty' },
           });
         }
         return Promise.resolve({ action: 'X_ACTION_RESULT', step: 'compose', success: false });

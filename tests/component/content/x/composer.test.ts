@@ -7,7 +7,6 @@ import {
   resolveEditableComposer,
   scoreComposer,
   matchesExpectedComposerText,
-  splitIntoTypingChunks,
 } from '@content/x/composer';
 import { ensureComposerText } from '@content/x/composer-proof';
 import { clickPost } from '@content/x/composer-submit';
@@ -323,27 +322,6 @@ describe('matchesExpectedComposerText', () => {
   });
 });
 
-// ---- splitIntoTypingChunks ----
-
-describe('splitIntoTypingChunks', () => {
-  it('splits text into word-level chunks', () => {
-    const chunks = splitIntoTypingChunks('hello world test');
-    expect(chunks.length).toBeGreaterThanOrEqual(3);
-    expect(chunks.join('')).toBe('hello world test');
-  });
-
-  it('preserves newlines as separate chunks', () => {
-    const chunks = splitIntoTypingChunks('line1\nline2');
-    expect(chunks.join('')).toBe('line1\nline2');
-    expect(chunks.some((chunk: string) => chunk.includes('\n'))).toBe(true);
-  });
-
-  it('returns single-element array for text without word boundaries', () => {
-    const chunks = splitIntoTypingChunks('');
-    expect(chunks).toEqual(['']);
-  });
-});
-
 // ---- Composer selection with multiple candidates ----
 
 describe('composer selection semantics (selector coverage)', () => {
@@ -414,7 +392,7 @@ describe('composer selection semantics (selector coverage)', () => {
 // ---- Phase 4: Submit semantics probe layer ----
 
 describe('submit semantics probe layer', () => {
-  it('dispatches a human-like insertion event sequence', async () => {
+  it('dispatches a paste-first insertion event sequence', async () => {
     const editor = createComposerNode({
       contentEditable: true,
       role: 'textbox',
@@ -425,15 +403,14 @@ describe('submit semantics probe layer', () => {
 
     const events: string[] = [];
     const eventDetails = {
-      keydown: '',
+      paste: '',
       beforeinput: { data: '', inputType: '' },
       input: { data: '', inputType: '' },
-      keyup: '',
     };
     editor.addEventListener('focus', () => events.push('focus'));
-    editor.addEventListener('keydown', (event) => {
-      events.push('keydown');
-      eventDetails.keydown = (event as KeyboardEvent).key;
+    editor.addEventListener('paste', (event) => {
+      events.push('paste');
+      eventDetails.paste = (event as ClipboardEvent).clipboardData?.getData('text/plain') ?? '';
     });
     editor.addEventListener('beforeinput', (event) => {
       events.push('beforeinput');
@@ -448,10 +425,6 @@ describe('submit semantics probe layer', () => {
         data: (event as InputEvent).data ?? '',
         inputType: (event as InputEvent).inputType,
       };
-    });
-    editor.addEventListener('keyup', (event) => {
-      events.push('keyup');
-      eventDetails.keyup = (event as KeyboardEvent).key;
     });
     editor.addEventListener('change', () => events.push('change'));
 
@@ -472,12 +445,11 @@ describe('submit semantics probe layer', () => {
       sleep: async () => {},
     });
 
-    expect(events).toEqual(['focus', 'keydown', 'beforeinput', 'input', 'keyup', 'change']);
+    expect(events).toEqual(['focus', 'paste', 'beforeinput', 'input', 'change']);
     expect(eventDetails).toEqual({
-      keydown: 'h',
-      beforeinput: { data: 'h', inputType: 'insertText' },
-      input: { data: 'h', inputType: 'insertText' },
-      keyup: 'h',
+      paste: 'h',
+      beforeinput: { data: 'h', inputType: 'insertFromPaste' },
+      input: { data: 'h', inputType: 'insertFromPaste' },
     });
   });
 
@@ -491,8 +463,8 @@ describe('submit semantics probe layer', () => {
     editor.tabIndex = 0;
 
     const submitModel = { value: '' };
-    editor.addEventListener('beforeinput', (event) => {
-      submitModel.value += (event as InputEvent).data ?? '';
+    editor.addEventListener('paste', (event) => {
+      submitModel.value = (event as ClipboardEvent).clipboardData?.getData('text/plain') ?? '';
     });
 
     const execCommand = vi.fn((commandId: string, _showUI?: boolean, value?: string) => {
@@ -618,7 +590,7 @@ describe('ComposeEvidence contract (Phase 1)', () => {
     const evidence: ComposeEvidence = {
       proofStatus: 'visible-only',
       targetSelector: 'div[data-testid="tweetTextarea_0"]',
-      insertionStrategy: 'execCommand-insertText',
+      insertionStrategy: 'paste-execCommand-input',
       visibleText: 'Caption is visible',
       visibleMatchesExpected: false,
     };
@@ -631,7 +603,7 @@ describe('ComposeEvidence contract (Phase 1)', () => {
     const evidence: ComposeEvidence = {
       proofStatus: 'draft-ready',
       targetSelector: 'div[data-testid="tweetTextarea_0"]',
-      insertionStrategy: 'execCommand-insertText',
+      insertionStrategy: 'paste-execCommand-input',
       visibleText: 'Full caption text',
       visibleMatchesExpected: true,
     };
@@ -644,7 +616,7 @@ describe('ComposeEvidence contract (Phase 1)', () => {
     const evidence: ComposeEvidence = {
       proofStatus: 'proof-failed',
       targetSelector: 'unknown',
-      insertionStrategy: 'execCommand-insertText',
+      insertionStrategy: 'paste-execCommand-input',
       visibleText: '',
       visibleMatchesExpected: false,
       errorDetail: 'Composer empty after 3 attempts.',
@@ -655,24 +627,24 @@ describe('ComposeEvidence contract (Phase 1)', () => {
   });
 
   it('isSubmitEligible returns true only for submit-ready', () => {
-    expect(isSubmitEligible({ proofStatus: 'submit-ready', targetSelector: '', insertionStrategy: 'execCommand-insertText', visibleText: 'x', visibleMatchesExpected: true })).toBe(true);
-    expect(isSubmitEligible({ proofStatus: 'draft-ready', targetSelector: '', insertionStrategy: 'execCommand-insertText', visibleText: 'x', visibleMatchesExpected: true })).toBe(false);
-    expect(isSubmitEligible({ proofStatus: 'visible-only', targetSelector: '', insertionStrategy: 'execCommand-insertText', visibleText: 'x', visibleMatchesExpected: false })).toBe(false);
-    expect(isSubmitEligible({ proofStatus: 'proof-failed', targetSelector: '', insertionStrategy: 'execCommand-insertText', visibleText: '', visibleMatchesExpected: false })).toBe(false);
+    expect(isSubmitEligible({ proofStatus: 'submit-ready', targetSelector: '', insertionStrategy: 'paste-execCommand-input', visibleText: 'x', visibleMatchesExpected: true })).toBe(true);
+    expect(isSubmitEligible({ proofStatus: 'draft-ready', targetSelector: '', insertionStrategy: 'paste-execCommand-input', visibleText: 'x', visibleMatchesExpected: true })).toBe(false);
+    expect(isSubmitEligible({ proofStatus: 'visible-only', targetSelector: '', insertionStrategy: 'paste-execCommand-input', visibleText: 'x', visibleMatchesExpected: false })).toBe(false);
+    expect(isSubmitEligible({ proofStatus: 'proof-failed', targetSelector: '', insertionStrategy: 'paste-execCommand-input', visibleText: '', visibleMatchesExpected: false })).toBe(false);
   });
 
   it('isDraftEligible returns true for submit-ready, draft-ready, and visible-only', () => {
-    expect(isDraftEligible({ proofStatus: 'submit-ready', targetSelector: '', insertionStrategy: 'execCommand-insertText', visibleText: 'x', visibleMatchesExpected: true })).toBe(true);
-    expect(isDraftEligible({ proofStatus: 'draft-ready', targetSelector: '', insertionStrategy: 'execCommand-insertText', visibleText: 'x', visibleMatchesExpected: true })).toBe(true);
-    expect(isDraftEligible({ proofStatus: 'visible-only', targetSelector: '', insertionStrategy: 'execCommand-insertText', visibleText: 'x', visibleMatchesExpected: false })).toBe(true);
-    expect(isDraftEligible({ proofStatus: 'proof-failed', targetSelector: '', insertionStrategy: 'execCommand-insertText', visibleText: '', visibleMatchesExpected: false })).toBe(false);
+    expect(isDraftEligible({ proofStatus: 'submit-ready', targetSelector: '', insertionStrategy: 'paste-execCommand-input', visibleText: 'x', visibleMatchesExpected: true })).toBe(true);
+    expect(isDraftEligible({ proofStatus: 'draft-ready', targetSelector: '', insertionStrategy: 'paste-execCommand-input', visibleText: 'x', visibleMatchesExpected: true })).toBe(true);
+    expect(isDraftEligible({ proofStatus: 'visible-only', targetSelector: '', insertionStrategy: 'paste-execCommand-input', visibleText: 'x', visibleMatchesExpected: false })).toBe(true);
+    expect(isDraftEligible({ proofStatus: 'proof-failed', targetSelector: '', insertionStrategy: 'paste-execCommand-input', visibleText: '', visibleMatchesExpected: false })).toBe(false);
   });
 
   it('legacy failure path maps to proof-failed without losing error detail', () => {
     const evidence: ComposeEvidence = {
       proofStatus: 'proof-failed',
       targetSelector: 'none',
-      insertionStrategy: 'execCommand-insertText',
+      insertionStrategy: 'paste-execCommand-input',
       visibleText: '',
       visibleMatchesExpected: false,
       errorDetail: 'Not logged in to X.',

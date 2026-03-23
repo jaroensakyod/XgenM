@@ -84,7 +84,7 @@ export interface ComposeEvidence {
   /** The selector strategy used to locate the composer */
   targetSelector: string;
   /** The insertion strategy that was applied */
-  insertionStrategy: 'execCommand-insertText';
+  insertionStrategy: 'paste-execCommand-input';
   /** Normalized visible text read back from the composer */
   visibleText: string;
   /** Whether the visible text matches the expected text */

@@ -4,7 +4,7 @@
 
 import { sleep } from '@shared/timing';
 
-const INSERT_TEXT_INPUT_TYPE = 'insertText';
+const PASTE_INPUT_TYPE = 'insertFromPaste';
 
 export function normalizeComposerText(text: string): string {
   return text
@@ -18,11 +18,6 @@ export function matchesExpectedComposerText(actual: string, expected: string): b
   if (!normalizedExpected) return actual.length > 0;
 
   return actual === normalizedExpected || actual.includes(normalizedExpected);
-}
-
-export function splitIntoTypingChunks(text: string): string[] {
-  const matches = text.match(/\S+\s*|\n+/g);
-  return matches && matches.length > 0 ? matches : [text];
 }
 
 export interface ComposerInsertionRuntime {
@@ -49,35 +44,12 @@ function defineEventProperties<T extends Event>(
   return event;
 }
 
-function createKeyboardEvent(type: 'keydown' | 'keyup', chunk: string): Event {
-  let key = 'Unidentified';
-  if (chunk === '\n') {
-    key = 'Enter';
-  } else if (chunk.length === 1) {
-    key = chunk;
-  }
-
-  if (typeof KeyboardEvent === 'function') {
-    return new KeyboardEvent(type, {
-      bubbles: true,
-      cancelable: type === 'keydown',
-      key,
-    });
-  }
-
-  const event = new Event(type, {
-    bubbles: true,
-    cancelable: type === 'keydown',
-  });
-  return defineEventProperties(event, { key });
-}
-
-function createTypingInputEvent(type: 'beforeinput' | 'input', chunk: string): Event {
+function createTypingInputEvent(type: 'beforeinput' | 'input', text: string): Event {
   const init = {
     bubbles: true,
     cancelable: type === 'beforeinput',
-    data: chunk,
-    inputType: INSERT_TEXT_INPUT_TYPE,
+    data: text,
+    inputType: PASTE_INPUT_TYPE,
   };
 
   if (typeof InputEvent === 'function') {
@@ -89,9 +61,68 @@ function createTypingInputEvent(type: 'beforeinput' | 'input', chunk: string): E
     cancelable: type === 'beforeinput',
   });
   return defineEventProperties(event, {
-    data: chunk,
-    inputType: INSERT_TEXT_INPUT_TYPE,
+    data: text,
+    inputType: PASTE_INPUT_TYPE,
   });
+}
+
+function createDataTransfer(text: string): DataTransfer {
+  if (typeof DataTransfer === 'function') {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData('text/plain', text);
+    return dataTransfer;
+  }
+
+  const store = new Map<string, string>();
+  const fallback = {
+    dropEffect: 'none',
+    effectAllowed: 'all',
+    files: [] as unknown as FileList,
+    items: [] as unknown as DataTransferItemList,
+    types: [] as string[],
+    getData(format: string) {
+      return store.get(format) ?? '';
+    },
+    setData(format: string, value: string) {
+      store.set(format, value);
+      this.types = Array.from(store.keys());
+    },
+    clearData(format?: string) {
+      if (format) {
+        store.delete(format);
+      } else {
+        store.clear();
+      }
+      this.types = Array.from(store.keys());
+    },
+    setDragImage() {},
+  };
+
+  fallback.setData('text/plain', text);
+  return fallback as unknown as DataTransfer;
+}
+
+function createPasteEvent(dataTransfer: DataTransfer): Event {
+  const init = {
+    bubbles: true,
+    cancelable: true,
+    clipboardData: dataTransfer,
+  };
+
+  if (typeof ClipboardEvent === 'function') {
+    try {
+      const event = new ClipboardEvent('paste', init);
+      return defineEventProperties(event, { clipboardData: dataTransfer });
+    } catch {
+      // Fall back to a generic Event in environments with partial ClipboardEvent support.
+    }
+  }
+
+  const event = new Event('paste', {
+    bubbles: true,
+    cancelable: true,
+  });
+  return defineEventProperties(event, { clipboardData: dataTransfer });
 }
 
 export async function applyComposerTextInsertion(
@@ -110,18 +141,18 @@ export async function applyComposerTextInsertion(
   execCommand('selectAll', false);
   execCommand('delete', false);
 
-  for (const chunk of splitIntoTypingChunks(text)) {
-    el.dispatchEvent(createKeyboardEvent('keydown', chunk));
-    const beforeInput = createTypingInputEvent('beforeinput', chunk);
-    const shouldInsert = el.dispatchEvent(beforeInput);
+  if (text.length > 0) {
+    const dataTransfer = createDataTransfer(text);
+    const pasteEvent = createPasteEvent(dataTransfer);
+    const shouldContinue = el.dispatchEvent(pasteEvent)
+      && el.dispatchEvent(createTypingInputEvent('beforeinput', text));
 
-    if (shouldInsert) {
-      execCommand('insertText', false, chunk);
+    if (shouldContinue) {
+      execCommand('insertText', false, text);
     }
 
-    el.dispatchEvent(createTypingInputEvent('input', chunk));
-    el.dispatchEvent(createKeyboardEvent('keyup', chunk));
-    await wait(Math.min(220, Math.max(60, chunk.length * 18)));
+    el.dispatchEvent(createTypingInputEvent('input', text));
+    await wait(200);
   }
 
   el.dispatchEvent(new Event('change', { bubbles: true }));
