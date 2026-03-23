@@ -78,13 +78,16 @@ export type ComposeProofStatus =
   | 'submit-ready'   // Full evidence: visible + tracked editor state matches
   | 'proof-failed';  // Verification attempted but failed
 
+/** Strategy label describing how text was inserted into the composer */
+export type InsertionStrategyLabel = 'paste' | 'execCommand' | 'fallback-typing' | 'failed';
+
 /** Structured evidence returned by the X content script after compose */
 export interface ComposeEvidence {
   proofStatus: ComposeProofStatus;
   /** The selector strategy used to locate the composer */
   targetSelector: string;
   /** The insertion strategy that was applied */
-  insertionStrategy: 'paste-execCommand-input';
+  insertionStrategy: InsertionStrategyLabel;
   /** Normalized visible text read back from the composer */
   visibleText: string;
   /** Whether the visible text matches the expected text */

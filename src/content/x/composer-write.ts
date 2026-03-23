@@ -2,9 +2,13 @@
 // composer-write.ts — Text insertion into X's contenteditable composer
 // ---------------------------------------------------------------------------
 
+import type { InsertionStrategyLabel } from '@shared/types';
 import { sleep } from '@shared/timing';
 
-const PASTE_INPUT_TYPE = 'insertFromPaste';
+export interface InsertionResult {
+  applied: boolean;
+  strategy: InsertionStrategyLabel;
+}
 
 export function normalizeComposerText(text: string): string {
   return text
@@ -27,6 +31,7 @@ export interface ComposerInsertionRuntime {
     value?: string,
   ) => boolean;
   sleep?: (ms: number) => Promise<void>;
+  getSelection?: () => Selection | null;
 }
 
 function defineEventProperties<T extends Event>(
@@ -42,28 +47,6 @@ function defineEventProperties<T extends Event>(
   }
 
   return event;
-}
-
-function createTypingInputEvent(type: 'beforeinput' | 'input', text: string): Event {
-  const init = {
-    bubbles: true,
-    cancelable: type === 'beforeinput',
-    data: text,
-    inputType: PASTE_INPUT_TYPE,
-  };
-
-  if (typeof InputEvent === 'function') {
-    return new InputEvent(type, init);
-  }
-
-  const event = new Event(type, {
-    bubbles: true,
-    cancelable: type === 'beforeinput',
-  });
-  return defineEventProperties(event, {
-    data: text,
-    inputType: PASTE_INPUT_TYPE,
-  });
 }
 
 function createDataTransfer(text: string): DataTransfer {
@@ -125,35 +108,116 @@ function createPasteEvent(dataTransfer: DataTransfer): Event {
   return defineEventProperties(event, { clipboardData: dataTransfer });
 }
 
+function placeCursorAtEnd(
+  el: HTMLElement,
+  getSelection: () => Selection | null,
+): void {
+  const selection = getSelection();
+  if (!selection) return;
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  range.collapse(false);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+function composeTextLooksApplied(el: HTMLElement, text: string): boolean {
+  const currentText = (el.innerText || el.textContent || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const expectedSample = text.replace(/\s+/g, ' ').trim().slice(0, 24);
+  return Boolean(currentText && expectedSample && currentText.includes(expectedSample));
+}
+
+function randomBetween(min: number, max: number): number {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+async function typeHumanLike(
+  el: HTMLElement,
+  text: string,
+  execCommand: (cmd: string, showUI?: boolean, value?: string) => boolean,
+  wait: (ms: number) => Promise<void>,
+): Promise<void> {
+  const maxChars = Math.min(text.length, 300);
+  for (let i = 0; i < maxChars; i += 1) {
+    const char = text[i];
+    el.focus();
+    if (char === '\n') {
+      execCommand('insertLineBreak');
+    } else {
+      execCommand('insertText', false, char);
+    }
+    el.dispatchEvent(
+      new InputEvent('input', {
+        bubbles: true,
+        cancelable: true,
+        data: char,
+        inputType: char === '\n' ? 'insertLineBreak' : 'insertText',
+      }),
+    );
+    await wait(randomBetween(15, 60));
+  }
+}
+
 export async function applyComposerTextInsertion(
   el: HTMLElement,
   text: string,
   runtime: ComposerInsertionRuntime = {},
-): Promise<void> {
+): Promise<InsertionResult> {
   const execCommand = runtime.execCommand
     ?? ((commandId: string, showUI?: boolean, value?: string) =>
       document.execCommand(commandId, showUI ?? false, value));
   const wait = runtime.sleep ?? sleep;
+  const getSelectionFn = runtime.getSelection ?? (() => window.getSelection());
 
   el.focus();
-  await wait(200);
+  await wait(300);
 
   execCommand('selectAll', false);
   execCommand('delete', false);
+  await wait(200);
 
-  if (text.length > 0) {
-    const dataTransfer = createDataTransfer(text);
-    const pasteEvent = createPasteEvent(dataTransfer);
-    const shouldContinue = el.dispatchEvent(pasteEvent)
-      && el.dispatchEvent(createTypingInputEvent('beforeinput', text));
-
-    if (shouldContinue) {
-      execCommand('insertText', false, text);
-    }
-
-    el.dispatchEvent(createTypingInputEvent('input', text));
-    await wait(200);
+  if (text.length === 0) {
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    return { applied: true, strategy: 'paste' };
   }
 
+  el.focus();
+  placeCursorAtEnd(el, getSelectionFn);
+
+  const dataTransfer = createDataTransfer(text);
+  const pasteEvent = createPasteEvent(dataTransfer);
+  el.dispatchEvent(pasteEvent);
+
+  let strategy: InsertionStrategyLabel = 'paste';
+  if (!pasteEvent.defaultPrevented) {
+    execCommand('insertText', false, text);
+    strategy = 'execCommand';
+  }
+
+  el.dispatchEvent(
+    new InputEvent('input', {
+      bubbles: true,
+      cancelable: true,
+      data: text,
+      inputType: 'insertText',
+    }),
+  );
+
+  await wait(500);
+
+  if (!composeTextLooksApplied(el, text)) {
+    execCommand('selectAll', false);
+    execCommand('delete', false);
+    await wait(200);
+    placeCursorAtEnd(el, getSelectionFn);
+    await typeHumanLike(el, text, execCommand, wait);
+    await wait(500);
+    strategy = 'fallback-typing';
+  }
+
+  const applied = composeTextLooksApplied(el, text);
   el.dispatchEvent(new Event('change', { bubbles: true }));
+  return { applied, strategy: applied ? strategy : 'failed' };
 }

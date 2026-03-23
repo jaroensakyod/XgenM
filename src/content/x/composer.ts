@@ -31,7 +31,7 @@ export {
   matchesExpectedComposerText,
   applyComposerTextInsertion,
 } from './composer-write';
-export type { ComposerInsertionRuntime } from './composer-write';
+export type { ComposerInsertionRuntime, InsertionResult } from './composer-write';
 
 function debugLog(text: string): void {
   chrome.runtime.sendMessage({
@@ -78,7 +78,7 @@ chrome.runtime.onMessage.addListener(
           respond('compose', false, 'Not logged in to X.', {
             proofStatus: 'proof-failed',
             targetSelector: 'none',
-            insertionStrategy: 'paste-execCommand-input',
+            insertionStrategy: 'failed',
             visibleText: '',
             visibleMatchesExpected: false,
             errorDetail: 'Not logged in to X.',
@@ -102,7 +102,7 @@ chrome.runtime.onMessage.addListener(
             respond('compose', false, errorMsg, {
               proofStatus: 'proof-failed',
               targetSelector: 'unknown',
-              insertionStrategy: 'paste-execCommand-input',
+              insertionStrategy: 'failed',
               visibleText: '',
               visibleMatchesExpected: false,
               errorDetail: errorMsg,

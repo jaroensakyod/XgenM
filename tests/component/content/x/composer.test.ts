@@ -440,17 +440,16 @@ describe('submit semantics probe layer', () => {
       return true;
     });
 
-    await applyComposerTextInsertion(editor, 'h', {
+    const result = await applyComposerTextInsertion(editor, 'h', {
       execCommand,
       sleep: async () => {},
+      getSelection: () => null,
     });
 
-    expect(events).toEqual(['focus', 'paste', 'beforeinput', 'input', 'change']);
-    expect(eventDetails).toEqual({
-      paste: 'h',
-      beforeinput: { data: 'h', inputType: 'insertFromPaste' },
-      input: { data: 'h', inputType: 'insertFromPaste' },
-    });
+    expect(result).toEqual({ applied: true, strategy: 'execCommand' });
+    expect(events).toEqual(['focus', 'paste', 'input', 'change']);
+    expect(eventDetails.paste).toBe('h');
+    expect(eventDetails.input).toEqual({ data: 'h', inputType: 'insertText' });
   });
 
   it('keeps submit-state listeners in sync with visible composer text', async () => {
@@ -482,6 +481,7 @@ describe('submit semantics probe layer', () => {
     await applyComposerTextInsertion(editor, 'Visible caption only', {
       execCommand,
       sleep: async () => {},
+      getSelection: () => null,
     });
 
     const visibleText = normalizeComposerText(editor.textContent ?? '');
@@ -521,6 +521,7 @@ describe('submit semantics probe layer', () => {
     await applyComposerTextInsertion(editor, 'Guard this caption', {
       execCommand,
       sleep: async () => {},
+      getSelection: () => null,
     });
 
     expect(normalizeComposerText(editor.textContent ?? '')).toBe('Guard this caption');
@@ -590,7 +591,7 @@ describe('ComposeEvidence contract (Phase 1)', () => {
     const evidence: ComposeEvidence = {
       proofStatus: 'visible-only',
       targetSelector: 'div[data-testid="tweetTextarea_0"]',
-      insertionStrategy: 'paste-execCommand-input',
+      insertionStrategy: 'paste',
       visibleText: 'Caption is visible',
       visibleMatchesExpected: false,
     };
@@ -603,7 +604,7 @@ describe('ComposeEvidence contract (Phase 1)', () => {
     const evidence: ComposeEvidence = {
       proofStatus: 'draft-ready',
       targetSelector: 'div[data-testid="tweetTextarea_0"]',
-      insertionStrategy: 'paste-execCommand-input',
+      insertionStrategy: 'paste',
       visibleText: 'Full caption text',
       visibleMatchesExpected: true,
     };
@@ -616,7 +617,7 @@ describe('ComposeEvidence contract (Phase 1)', () => {
     const evidence: ComposeEvidence = {
       proofStatus: 'proof-failed',
       targetSelector: 'unknown',
-      insertionStrategy: 'paste-execCommand-input',
+      insertionStrategy: 'failed',
       visibleText: '',
       visibleMatchesExpected: false,
       errorDetail: 'Composer empty after 3 attempts.',
@@ -627,24 +628,24 @@ describe('ComposeEvidence contract (Phase 1)', () => {
   });
 
   it('isSubmitEligible returns true only for submit-ready', () => {
-    expect(isSubmitEligible({ proofStatus: 'submit-ready', targetSelector: '', insertionStrategy: 'paste-execCommand-input', visibleText: 'x', visibleMatchesExpected: true })).toBe(true);
-    expect(isSubmitEligible({ proofStatus: 'draft-ready', targetSelector: '', insertionStrategy: 'paste-execCommand-input', visibleText: 'x', visibleMatchesExpected: true })).toBe(false);
-    expect(isSubmitEligible({ proofStatus: 'visible-only', targetSelector: '', insertionStrategy: 'paste-execCommand-input', visibleText: 'x', visibleMatchesExpected: false })).toBe(false);
-    expect(isSubmitEligible({ proofStatus: 'proof-failed', targetSelector: '', insertionStrategy: 'paste-execCommand-input', visibleText: '', visibleMatchesExpected: false })).toBe(false);
+    expect(isSubmitEligible({ proofStatus: 'submit-ready', targetSelector: '', insertionStrategy: 'paste', visibleText: 'x', visibleMatchesExpected: true })).toBe(true);
+    expect(isSubmitEligible({ proofStatus: 'draft-ready', targetSelector: '', insertionStrategy: 'paste', visibleText: 'x', visibleMatchesExpected: true })).toBe(false);
+    expect(isSubmitEligible({ proofStatus: 'visible-only', targetSelector: '', insertionStrategy: 'paste', visibleText: 'x', visibleMatchesExpected: false })).toBe(false);
+    expect(isSubmitEligible({ proofStatus: 'proof-failed', targetSelector: '', insertionStrategy: 'failed', visibleText: '', visibleMatchesExpected: false })).toBe(false);
   });
 
   it('isDraftEligible returns true for submit-ready, draft-ready, and visible-only', () => {
-    expect(isDraftEligible({ proofStatus: 'submit-ready', targetSelector: '', insertionStrategy: 'paste-execCommand-input', visibleText: 'x', visibleMatchesExpected: true })).toBe(true);
-    expect(isDraftEligible({ proofStatus: 'draft-ready', targetSelector: '', insertionStrategy: 'paste-execCommand-input', visibleText: 'x', visibleMatchesExpected: true })).toBe(true);
-    expect(isDraftEligible({ proofStatus: 'visible-only', targetSelector: '', insertionStrategy: 'paste-execCommand-input', visibleText: 'x', visibleMatchesExpected: false })).toBe(true);
-    expect(isDraftEligible({ proofStatus: 'proof-failed', targetSelector: '', insertionStrategy: 'paste-execCommand-input', visibleText: '', visibleMatchesExpected: false })).toBe(false);
+    expect(isDraftEligible({ proofStatus: 'submit-ready', targetSelector: '', insertionStrategy: 'paste', visibleText: 'x', visibleMatchesExpected: true })).toBe(true);
+    expect(isDraftEligible({ proofStatus: 'draft-ready', targetSelector: '', insertionStrategy: 'paste', visibleText: 'x', visibleMatchesExpected: true })).toBe(true);
+    expect(isDraftEligible({ proofStatus: 'visible-only', targetSelector: '', insertionStrategy: 'paste', visibleText: 'x', visibleMatchesExpected: false })).toBe(true);
+    expect(isDraftEligible({ proofStatus: 'proof-failed', targetSelector: '', insertionStrategy: 'failed', visibleText: '', visibleMatchesExpected: false })).toBe(false);
   });
 
   it('legacy failure path maps to proof-failed without losing error detail', () => {
     const evidence: ComposeEvidence = {
       proofStatus: 'proof-failed',
       targetSelector: 'none',
-      insertionStrategy: 'paste-execCommand-input',
+      insertionStrategy: 'failed',
       visibleText: '',
       visibleMatchesExpected: false,
       errorDetail: 'Not logged in to X.',
@@ -652,5 +653,118 @@ describe('ComposeEvidence contract (Phase 1)', () => {
 
     expect(evidence.proofStatus).toBe('proof-failed');
     expect(evidence.errorDetail).toBe('Not logged in to X.');
+  });
+});
+
+// ---- Phase 3 (Parity): Browser-realistic failure mode tests ----
+
+describe('Xafi parity: insertion envelope', () => {
+  it('falls back to char-by-char typing when paste does not insert text', async () => {
+    const editor = createComposerNode({
+      contentEditable: true,
+      role: 'textbox',
+      width: 400,
+      height: 120,
+    });
+    editor.tabIndex = 0;
+
+    const execCommand = vi.fn((commandId: string, _showUI?: boolean, value?: string) => {
+      if (commandId === 'selectAll' || commandId === 'delete') {
+        editor.textContent = '';
+        return true;
+      }
+      if (commandId === 'insertText') {
+        // Simulate: bulk paste insertion is ignored by editor, only single-char works
+        if (value && value.length > 1) return true;
+        editor.textContent = `${editor.textContent ?? ''}${value ?? ''}`;
+        return true;
+      }
+      if (commandId === 'insertLineBreak') {
+        editor.textContent = `${editor.textContent ?? ''}\n`;
+        return true;
+      }
+      return true;
+    });
+
+    const result = await applyComposerTextInsertion(editor, 'Fallback test', {
+      execCommand,
+      sleep: async () => {},
+      getSelection: () => null,
+    });
+
+    expect(result).toEqual({ applied: true, strategy: 'fallback-typing' });
+    expect(normalizeComposerText(editor.textContent ?? '')).toBe('Fallback test');
+  });
+
+  it('returns failed when all insertion strategies produce no text', async () => {
+    const editor = createComposerNode({
+      contentEditable: true,
+      role: 'textbox',
+      width: 400,
+      height: 120,
+    });
+    editor.tabIndex = 0;
+
+    // Mock that never actually inserts any text
+    const execCommand = vi.fn(() => true);
+
+    const result = await applyComposerTextInsertion(editor, 'Never inserted', {
+      execCommand,
+      sleep: async () => {},
+      getSelection: () => null,
+    });
+
+    expect(result).toEqual({ applied: false, strategy: 'failed' });
+    expect(editor.textContent).toBe('');
+  });
+
+  it('calls focus twice: before and after clearing the editor', async () => {
+    const editor = createComposerNode({
+      contentEditable: true,
+      role: 'textbox',
+      width: 400,
+      height: 120,
+    });
+    editor.tabIndex = 0;
+
+    const focusSpy = vi.spyOn(editor, 'focus');
+    mockExecCommandOn(editor);
+
+    await applyComposerTextInsertion(editor, 'double focus', {
+      sleep: async () => {},
+      getSelection: () => null,
+    });
+
+    // First focus before clear, second focus after clear (before paste)
+    expect(focusSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('dispatches InputEvent with insertText type instead of insertFromPaste', async () => {
+    const editor = createComposerNode({
+      contentEditable: true,
+      role: 'textbox',
+      width: 400,
+      height: 120,
+    });
+    editor.tabIndex = 0;
+
+    const inputEvents: { data: string; inputType: string }[] = [];
+    editor.addEventListener('input', (event) => {
+      inputEvents.push({
+        data: (event as InputEvent).data ?? '',
+        inputType: (event as InputEvent).inputType,
+      });
+    });
+
+    mockExecCommandOn(editor);
+
+    await applyComposerTextInsertion(editor, 'test input type', {
+      sleep: async () => {},
+      getSelection: () => null,
+    });
+
+    // The main InputEvent should use 'insertText' (Xafi parity), not 'insertFromPaste'
+    expect(inputEvents.some((e) => e.inputType === 'insertText')).toBe(true);
+    expect(inputEvents.some((e) => e.inputType === 'insertFromPaste')).toBe(false);
   });
 });

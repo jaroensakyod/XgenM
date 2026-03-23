@@ -2,7 +2,7 @@
 // composer-proof.ts — Compose verification and evidence classification
 // ---------------------------------------------------------------------------
 
-import type { ComposeEvidence, ComposeProofStatus } from '@shared/types';
+import type { ComposeEvidence, ComposeProofStatus, InsertionStrategyLabel } from '@shared/types';
 import { sleep, waitForAnySelector } from '@shared/timing';
 import { POST_BUTTON_SELECTORS } from './selectors';
 import { findBestComposer } from './composer-target';
@@ -55,18 +55,21 @@ async function getPostButtonState(): Promise<{
 
 export async function ensureComposerText(
   text: string,
-  maxAttempts = 3,
+  maxAttempts = 2,
 ): Promise<ComposeEvidence> {
   let lastSelector = 'unknown';
   let lastVisibleText = '';
   let lastPostButtonSelector = 'none';
+  let lastStrategy: InsertionStrategyLabel = 'failed';
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     debugLog(`Ensuring caption is present (attempt ${attempt}/${maxAttempts}).`);
 
     const match = await findBestComposer();
     lastSelector = match.selector;
-    await applyComposerTextInsertion(match.element, text);
+    const result = await applyComposerTextInsertion(match.element, text);
+    lastStrategy = result.strategy;
+    debugLog(`Writer result: applied=${result.applied}, strategy=${result.strategy}`);
     await sleep(500);
 
     const actual = await readComposerText();
@@ -87,7 +90,7 @@ export async function ensureComposerText(
         return {
           proofStatus: 'submit-ready' as ComposeProofStatus,
           targetSelector: lastSelector,
-          insertionStrategy: 'paste-execCommand-input',
+          insertionStrategy: lastStrategy,
           visibleText: actual,
           visibleMatchesExpected: true,
         };
@@ -102,7 +105,7 @@ export async function ensureComposerText(
       return {
         proofStatus: 'draft-ready' as ComposeProofStatus,
         targetSelector: lastSelector,
-        insertionStrategy: 'paste-execCommand-input',
+        insertionStrategy: lastStrategy,
         visibleText: actual,
         visibleMatchesExpected: true,
         errorDetail:
@@ -119,7 +122,7 @@ export async function ensureComposerText(
     return {
       proofStatus: 'visible-only' as ComposeProofStatus,
       targetSelector: lastSelector,
-      insertionStrategy: 'paste-execCommand-input',
+      insertionStrategy: lastStrategy,
       visibleText: lastVisibleText,
       visibleMatchesExpected: false,
       errorDetail: `Caption verification failed. Final composer text: ${lastVisibleText.slice(0, 80)}`,
@@ -129,7 +132,7 @@ export async function ensureComposerText(
   return {
     proofStatus: 'proof-failed' as ComposeProofStatus,
     targetSelector: lastSelector,
-    insertionStrategy: 'paste-execCommand-input',
+    insertionStrategy: lastStrategy,
     visibleText: '',
     visibleMatchesExpected: false,
     errorDetail: `Caption verification failed. Composer empty after ${maxAttempts} attempts.`,
