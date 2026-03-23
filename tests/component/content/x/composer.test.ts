@@ -8,7 +8,7 @@ import {
   scoreComposer,
   matchesExpectedComposerText,
 } from '@content/x/composer';
-import { ensureComposerText } from '@content/x/composer-proof';
+import { ensureComposerText, matchComposerTextSemantically } from '@content/x/composer-proof';
 import { clickPost } from '@content/x/composer-submit';
 import { COMPOSER_TEXT_SELECTORS } from '@content/x/selectors';
 import type { ComposeEvidence } from '@shared/types';
@@ -656,6 +656,30 @@ describe('ComposeEvidence contract (Phase 1)', () => {
   });
 });
 
+describe('semantic proof matching', () => {
+  it('accepts reordered caption/source/hashtags when semantic content is complete', () => {
+    const expected = 'Caption body for proof matching\n\n#fyp #viral\n\nSource: TikTok @testuser';
+    const actual = 'Source: TikTok @testuser #fyp #viral Caption body for proof matching';
+
+    expect(matchComposerTextSemantically(actual, expected)).toEqual({
+      matched: true,
+      mode: 'semantic',
+      reasons: [],
+    });
+  });
+
+  it('rejects text that contains source and hashtags but misses the caption body', () => {
+    const expected = 'Caption body for proof matching\n\n#fyp #viral\n\nSource: TikTok @testuser';
+    const actual = 'Source: TikTok @testuser #fyp #viral';
+
+    expect(matchComposerTextSemantically(actual, expected)).toEqual({
+      matched: false,
+      mode: 'failed',
+      reasons: expect.arrayContaining(['missing-caption-body', expect.stringMatching(/^too-short:/)]),
+    });
+  });
+});
+
 // ---- Phase 3 (Parity): Browser-realistic failure mode tests ----
 
 describe('Xafi parity: insertion envelope', () => {
@@ -694,6 +718,74 @@ describe('Xafi parity: insertion envelope', () => {
 
     expect(result).toEqual({ applied: true, strategy: 'fallback-typing' });
     expect(normalizeComposerText(editor.textContent ?? '')).toBe('Fallback test');
+  });
+
+  it('returns submit-ready when readback reorders source and hashtags but content is complete', async () => {
+    globalThis.chrome.runtime.sendMessage = vi.fn(() => Promise.resolve());
+
+    const editor = createComposerNode({
+      contentEditable: true,
+      role: 'textbox',
+      width: 400,
+      height: 120,
+    });
+    editor.tabIndex = 0;
+    editor.setAttribute('data-testid', 'tweetTextarea_0');
+
+    const button = document.createElement('button');
+    button.setAttribute('data-testid', 'tweetButtonInline');
+    button.disabled = false;
+    document.body.appendChild(button);
+
+    mockExecCommandOn(editor);
+
+    const expected = 'Caption body for proof matching\n\n#fyp #viral\n\nSource: TikTok @testuser';
+    const reordered = 'Source: TikTok @testuser #fyp #viral Caption body for proof matching';
+
+    Object.defineProperty(editor, 'innerText', {
+      configurable: true,
+      get: () => reordered,
+    });
+
+    const evidence = await ensureComposerText(expected, 1);
+
+    expect(evidence.proofStatus).toBe('submit-ready');
+    expect(evidence.visibleMatchesExpected).toBe(true);
+    expect(evidence.visibleText).toBe(reordered);
+  });
+
+  it('keeps visible-only when source and hashtags are present but caption body is missing', async () => {
+    globalThis.chrome.runtime.sendMessage = vi.fn(() => Promise.resolve());
+
+    const editor = createComposerNode({
+      contentEditable: true,
+      role: 'textbox',
+      width: 400,
+      height: 120,
+    });
+    editor.tabIndex = 0;
+    editor.setAttribute('data-testid', 'tweetTextarea_0');
+
+    const button = document.createElement('button');
+    button.setAttribute('data-testid', 'tweetButtonInline');
+    button.disabled = false;
+    document.body.appendChild(button);
+
+    mockExecCommandOn(editor);
+
+    const expected = 'Short caption\n\n#fyp #viral\n\nSource: TikTok @testuser';
+    const partial = 'Source: TikTok @testuser #fyp #viral';
+
+    Object.defineProperty(editor, 'innerText', {
+      configurable: true,
+      get: () => partial,
+    });
+
+    const evidence = await ensureComposerText(expected, 1);
+
+    expect(evidence.proofStatus).toBe('visible-only');
+    expect(evidence.visibleMatchesExpected).toBe(false);
+    expect(evidence.errorDetail).toContain('missing-caption-body');
   });
 
   it('returns failed when all insertion strategies produce no text', async () => {
