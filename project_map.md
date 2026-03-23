@@ -1,6 +1,6 @@
 # XgenM Project Map
 
-- Last Updated: 2026-03-21
+- Last Updated: 2026-03-23
 - Project Type: Chrome Extension (Manifest V3)
 - Current Status: Implemented first-pass cross-post workflow, with TikTok as the strongest production path and Facebook Reel as a weaker best-effort path.
 
@@ -21,7 +21,7 @@ The most important architectural bias in the current implementation is reliabili
 - TikTok extraction is mature relative to the rest of the codebase and includes retries plus HTML fallback logic.
 - Facebook Reel extraction exists but is explicitly less reliable and should still be treated as a secondary path.
 - Persistence is local-only via `chrome.storage.local`.
-- No automated tests are present yet.
+- Over 115 unit and component tests exist (using Vitest), covering text parsing, DOM mocks, and phase transitions.
 
 ## Key Landmarks
 
@@ -58,11 +58,18 @@ The most important architectural bias in the current implementation is reliabili
 
 ### X Automation
 
+- `src/background/x-post-session.ts`
+  - The new "Submit-Truth" architecture state machine for X post lifecycle.
+  - Evaluates `ComposeEvidence` to handle safety gating (preventing empty text pushes).
+  - Drives background triggers and waits for `proof` from content scripts.
+
 - `src/content/x/composer.ts`
-  - Detects whether the user is logged in.
-  - Scores multiple candidate composer elements and picks the best visible editable surface.
-  - Inserts text, then verifies the expected normalized text is actually present.
-  - Clicks Post in auto-post mode.
+  - Orchestrator for decomposed modular behaviors (target, write, proof, submit).
+  - Legacy operations were moved into:
+    - `composer-target.ts`: DOM scoring and selection.
+    - `composer-write.ts`: DataTransfer and KeyboardEvent injections.
+    - `composer-proof.ts`: Verifies real text present in the DOM against expectations (the "Truth Contract", Evidence gating).
+    - `composer-submit.ts`: Handles validation before actually clicking the post button.
 
 - `src/content/x/upload.ts`
   - Finds the media input or media button.
@@ -210,9 +217,9 @@ Facebook Reel extraction is materially weaker than TikTok and should not be trea
 
 Large videos, blob recovery, and data URL conversion can be memory-heavy in extension context.
 
-### 6. No Automated Regression Net
+### 6. Maturing Automated Regression Net
 
-There are currently no automated tests. Confidence depends on build success plus manual live validation.
+We now have 115+ automated Vitest tests. However, end-to-end integration and DOM interaction for third-party websites (Facebook, TikTok, X) are inherently brittle. This means manual live validation is still required for the highest confidence in full extraction/posting flows.
 
 ## Next Work
 
