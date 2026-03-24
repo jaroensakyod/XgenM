@@ -1,8 +1,8 @@
 # XgenM Project Map
 
-- Last Updated: 2026-03-23
+- Last Updated: 2026-03-24
 - Project Type: Chrome Extension (Manifest V3)
-- Current Status: Implemented first-pass cross-post workflow, with TikTok as the strongest production path and Facebook Reel as a weaker best-effort path.
+- Current Status: Implemented cross-post workflow with TikTok as the strongest production path, plus a hardened X posting path that now uses upload-first orchestration, Xafi-parity composer insertion, and evidence-gated proof before draft/post decisions.
 
 ## Philosophy
 
@@ -21,7 +21,21 @@ The most important architectural bias in the current implementation is reliabili
 - TikTok extraction is mature relative to the rest of the codebase and includes retries plus HTML fallback logic.
 - Facebook Reel extraction exists but is explicitly less reliable and should still be treated as a secondary path.
 - Persistence is local-only via `chrome.storage.local`.
-- Over 115 unit and component tests exist (using Vitest), covering text parsing, DOM mocks, and phase transitions.
+- The X posting path now uses `x-post-session.ts` as the submit authority and `ComposeEvidence` as the truth contract, instead of trusting visible DOM state alone.
+- Composer insertion now mirrors Xafi's working envelope at the behavior level: focus, clear, caret placement, paste, native insert fallback, bounded fallback typing, then proof.
+- Composer proof is no longer strict-string-only. It now supports semantic matching so reordered hashtags or source-credit fragments do not incorrectly block trusted flows.
+- Over 115 unit and component tests exist (using Vitest), covering text parsing, DOM mocks, phase transitions, composer fallback paths, and proof semantics.
+
+## Recent Change Signals
+
+- `0510a09` `fix(proof): soften semantic auto-post matching`
+  - Added semantic proof matching in `src/content/x/composer-proof.ts`.
+  - Expanded composer tests to cover reordered caption/source/hashtags and mismatch-reason reporting.
+- `3aa5149` `fix(composer): port full Xafi insertion envelope for live X parity`
+  - Hardened `src/content/x/composer-write.ts` with caret placement, inline apply checks, fallback typing, and stronger insertion strategy reporting.
+  - Updated proof/session tests so background gating stays aligned with the writer's actual behavior.
+- `30e08c2` `refactor(xgenm): switch composer to paste flow`
+  - Introduced the paste-first modular composer path that later required the parity recovery above after live X exposed gaps.
 
 ## Key Landmarks
 
@@ -59,16 +73,16 @@ The most important architectural bias in the current implementation is reliabili
 ### X Automation
 
 - `src/background/x-post-session.ts`
-  - The new "Submit-Truth" architecture state machine for X post lifecycle.
-  - Evaluates `ComposeEvidence` to handle safety gating (preventing empty text pushes).
-  - Drives background triggers and waits for `proof` from content scripts.
+  - The "Submit-Truth" architecture state machine for X post lifecycle.
+  - Evaluates `ComposeEvidence` to handle safety gating, draft readiness, and auto-post eligibility.
+  - Remains the background authority even after composer writer/proof improvements.
 
 - `src/content/x/composer.ts`
   - Orchestrator for decomposed modular behaviors (target, write, proof, submit).
   - Legacy operations were moved into:
     - `composer-target.ts`: DOM scoring and selection.
-    - `composer-write.ts`: DataTransfer and KeyboardEvent injections.
-    - `composer-proof.ts`: Verifies real text present in the DOM against expectations (the "Truth Contract", Evidence gating).
+    - `composer-write.ts`: Xafi-parity insertion envelope with focus/reset, caret placement, paste, native insert fallback, and bounded fallback typing.
+    - `composer-proof.ts`: Verifies real text against expected content using strict plus semantic matching, and surfaces mismatch reasons for evidence gating.
     - `composer-submit.ts`: Handles validation before actually clicking the post button.
 
 - `src/content/x/upload.ts`
@@ -205,32 +219,38 @@ The dominant risk across TikTok, Facebook, and X is third-party DOM drift. This 
 
 Upload success is inferred from UI heuristics and button readiness, not from a stable API contract. This can silently break when X changes attachment UI.
 
-### 3. TikTok Hydration Gaps
+### 3. X Composer Event Fidelity
+
+The composer path is much stronger than before, but it still depends on real browser behavior in a third-party editor. Synthetic paste, selection APIs, and fallback typing can all regress if X changes how its editor accepts input.
+
+### 4. TikTok Hydration Gaps
 
 TikTok caption or media truth may not be immediately available because of SPA hydration timing. That is why retries and HTML fallback already exist.
 
-### 4. Facebook Fragility
+### 5. Facebook Fragility
 
 Facebook Reel extraction is materially weaker than TikTok and should not be treated as equivalent until hardened with broader selector families and richer page-state probing.
 
-### 5. Extension Memory And File Constraints
+### 6. Extension Memory And File Constraints
 
 Large videos, blob recovery, and data URL conversion can be memory-heavy in extension context.
 
-### 6. Maturing Automated Regression Net
+### 7. Semantic Proof Tolerance
 
-We now have 115+ automated Vitest tests. However, end-to-end integration and DOM interaction for third-party websites (Facebook, TikTok, X) are inherently brittle. This means manual live validation is still required for the highest confidence in full extraction/posting flows.
+The new semantic proof layer reduces false negatives for trusted reorderings, but if made too loose it could hide real caption drift. This layer still needs periodic live validation against real X behavior.
+
+### 8. Maturing Automated Regression Net
+
+We now have 115+ automated Vitest tests. However, end-to-end integration and DOM interaction for third-party websites (Facebook, TikTok, X) are inherently brittle. Manual live validation is still required for the highest confidence in upload, composer, and submit flows.
 
 ## Next Work
 
-1. Add a manual regression checklist for:
-   - TikTok draft flow
-   - X upload flow
-   - selector drift diagnostics
-2. Harden Facebook Reel extraction with broader selectors and richer fallback strategies.
-3. Expose a settings UI for source credit, hashtag cap, default mode, and caption template.
-4. Add deterministic tests around shared logic such as URL detection, text building, hashtag extraction, and truncation.
-5. Add clearer operator-facing failure messages when X composer or upload selectors drift.
+1. Run a live browser regression pass on the exact X flows that previously produced `Composer empty after 3 attempts`, covering both normal compose and quote surfaces.
+2. Capture a dedicated manual regression checklist for TikTok draft flow, X upload flow, and selector drift diagnostics.
+3. Harden Facebook Reel extraction with broader selectors and richer fallback strategies.
+4. Expose a settings UI for source credit, hashtag cap, default mode, and caption template.
+5. Add deterministic tests around shared logic such as URL detection, text building, hashtag extraction, and truncation.
+6. Add clearer operator-facing failure messages when X composer or upload selectors drift.
 
 ## Mermaid Overview
 
