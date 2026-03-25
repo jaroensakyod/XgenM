@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it } from 'vitest';
 
 import { App } from '@popup/App';
-import type { JobState } from '@shared/types';
+import { DEFAULT_SETTINGS, type JobState } from '@shared/types';
 
 import type { ChromeMock } from '../../mocks/chrome';
 
@@ -59,13 +59,23 @@ describe('popup App', () => {
   it('renders recovered job state and reacts to runtime job updates', async () => {
     const chromeMock = getChromeMock();
     chromeMock.__mock.setJobStateResponse(createJobState({
+      updatedAt: '2026-03-25T09:00:00.000Z',
       logs: ['Recovered job state'],
     }));
+    chromeMock.__mock.setJobStateSource('persisted');
+    chromeMock.__mock.setHistoryResponse([
+      createJobState({
+        updatedAt: '2026-03-25T09:00:00.000Z',
+        logs: ['Recovered job state'],
+      }),
+    ]);
 
     render(<App />);
 
-    expect(await screen.findByText('AWAITING REVIEW')).toBeInTheDocument();
+    expect(await screen.findAllByText('AWAITING REVIEW')).toHaveLength(2);
     expect(screen.getByText('Recovered job state')).toBeInTheDocument();
+    expect(screen.getByText(/recovered snapshot/i)).toBeInTheDocument();
+    expect(screen.getByText(/recent jobs/i)).toBeInTheDocument();
 
     act(() => {
       chromeMock.__mock.dispatchRuntimeMessage({
@@ -77,7 +87,45 @@ describe('popup App', () => {
       });
     });
 
-    expect(await screen.findByText('COMPLETED')).toBeInTheDocument();
+    expect(await screen.findAllByText('COMPLETED')).toHaveLength(1);
     expect(screen.getByText('Completed')).toBeInTheDocument();
+  });
+
+  it('hydrates settings and saves updated settings back to the background', async () => {
+    const chromeMock = getChromeMock();
+    chromeMock.__mock.setSettingsResponse({
+      ...DEFAULT_SETTINGS,
+      defaultMode: 'auto-post',
+      maxHashtags: 3,
+      captionTemplate: '{caption}\n\n{hashtags}',
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/default mode/i)).toHaveValue('auto-post');
+    });
+
+    fireEvent.change(screen.getByLabelText(/max hashtags/i), {
+      target: { value: '99' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Settings saved')).toBeInTheDocument();
+    });
+
+    expect(chromeMock.runtime.sendMessage).toHaveBeenCalledWith(
+      {
+        action: 'SAVE_SETTINGS',
+        settings: {
+          defaultMode: 'auto-post',
+          includeSourceCredit: true,
+          maxHashtags: 10,
+          captionTemplate: '{caption}\n\n{hashtags}',
+        },
+      },
+      expect.any(Function),
+    );
   });
 });

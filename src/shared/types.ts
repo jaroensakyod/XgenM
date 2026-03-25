@@ -1,3 +1,5 @@
+import type { ErrorCode } from './errors';
+
 // ---------------------------------------------------------------------------
 // Domain types — shared across background, popup, and content scripts
 // ---------------------------------------------------------------------------
@@ -61,10 +63,13 @@ export interface JobState {
   sourceUrl: string;
   platform: SourcePlatform;
   phase: JobPhase;
+  createdAt?: string;
+  updatedAt?: string;
   extraction?: ExtractedSourceData;
   preparedPost?: PreparedPost;
   logs: string[];
   error?: string;
+  errorCode?: ErrorCode;
 }
 
 // ---------------------------------------------------------------------------
@@ -125,3 +130,33 @@ export const DEFAULT_SETTINGS: UserSettings = {
   maxHashtags: 5,
   captionTemplate: '{caption}\n\n{hashtags}\n\nSource: {source}',
 };
+
+export const USER_SETTINGS_LIMITS = {
+  minHashtags: 0,
+  maxHashtags: 10,
+} as const;
+
+export function normalizeUserSettings(settings?: Partial<UserSettings> | null): UserSettings {
+  const maxHashtagsValue = Number(settings?.maxHashtags);
+  const maxHashtags = Number.isFinite(maxHashtagsValue)
+    ? Math.min(
+      USER_SETTINGS_LIMITS.maxHashtags,
+      Math.max(USER_SETTINGS_LIMITS.minHashtags, Math.trunc(maxHashtagsValue)),
+    )
+    : DEFAULT_SETTINGS.maxHashtags;
+
+  const defaultMode = settings?.defaultMode === 'auto-post'
+    ? 'auto-post'
+    : DEFAULT_SETTINGS.defaultMode;
+
+  const captionTemplate = settings?.captionTemplate?.trim()
+    ? settings.captionTemplate.trim()
+    : DEFAULT_SETTINGS.captionTemplate;
+
+  return {
+    defaultMode,
+    includeSourceCredit: settings?.includeSourceCredit ?? DEFAULT_SETTINGS.includeSourceCredit,
+    maxHashtags,
+    captionTemplate,
+  };
+}

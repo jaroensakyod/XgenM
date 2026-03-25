@@ -119,13 +119,13 @@ chrome.runtime.onMessage.addListener(
 
         attachMedia(videoDataUrl, fileName)
           .then(() => waitForUploadComplete())
-          .then((completed) => {
-            if (completed) {
+          .then((result) => {
+            if (result.completed) {
               debugLog('X upload flow reported success.');
               respond('upload', true);
             } else {
-              debugLog('X upload flow timed out without success indicator.');
-              respond('upload', false, 'Upload timed out.');
+              debugLog(`X upload flow timed out without success indicator: ${result.detail}`);
+              respond('upload', false, `Upload timed out. ${result.detail}`);
             }
           })
           .catch((err) => {
@@ -139,9 +139,11 @@ chrome.runtime.onMessage.addListener(
       case 'CLICK_POST': {
         clickPost()
           .then(() => respond('post', true))
-          .catch((err) =>
-            respond('post', false, err instanceof Error ? err.message : String(err)),
-          );
+          .catch((err) => {
+            const errorMsg = err instanceof Error ? err.message : String(err);
+            debugLog(`Post click failed: ${errorMsg}`);
+            respond('post', false, errorMsg);
+          });
         return true;
       }
 

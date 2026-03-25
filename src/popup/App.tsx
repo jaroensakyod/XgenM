@@ -1,11 +1,35 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import type { JobState, RunMode } from '@shared/types';
+import {
+  DEFAULT_SETTINGS,
+  USER_SETTINGS_LIMITS,
+  normalizeUserSettings,
+  type JobPhase,
+  type JobState,
+  type RunMode,
+  type UserSettings,
+} from '@shared/types';
+import { ERROR_RECOVERY_HINTS } from '@shared/errors';
 import type { JobStateUpdateMessage, RuntimeMessage } from '@shared/messages';
 import { UrlInput } from './components/UrlInput';
 import { PreviewCard } from './components/PreviewCard';
 import { ModeToggle } from './components/ModeToggle';
 import { RunButton } from './components/RunButton';
 import { LogPanel } from './components/LogPanel';
+
+type JobStateSource = 'live' | 'persisted' | 'none';
+
+function isRunningPhase(phase: JobPhase): boolean {
+  return phase !== 'idle' && phase !== 'completed' && phase !== 'failed';
+}
+
+function formatTimestamp(iso?: string): string {
+  if (!iso) return 'Unknown time';
+
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return 'Unknown time';
+
+  return parsed.toLocaleString();
+}
 
 const styles: Record<string, React.CSSProperties> = {
   container: {
@@ -36,28 +60,120 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 6,
     textAlign: 'center' as const,
   },
+  section: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+    padding: 12,
+    borderRadius: 10,
+    border: '1px solid var(--border)',
+    background: 'var(--surface)',
+  },
+  sectionTitle: {
+    fontSize: 13,
+    fontWeight: 700,
+    color: 'var(--text)',
+  },
+  helperText: {
+    fontSize: 11,
+    color: 'var(--text-muted)',
+  },
+  errorText: {
+    fontSize: 12,
+    color: 'var(--danger)',
+  },
+  row: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  input: {
+    width: '100%',
+    background: 'var(--surface)',
+    color: 'var(--text)',
+    border: '1px solid var(--border)',
+    borderRadius: 6,
+    padding: '8px 10px',
+    fontSize: 13,
+    fontFamily: 'inherit',
+  },
+  smallInput: {
+    width: 88,
+    background: 'var(--surface)',
+    color: 'var(--text)',
+    border: '1px solid var(--border)',
+    borderRadius: 6,
+    padding: '8px 10px',
+    fontSize: 13,
+    fontFamily: 'inherit',
+  },
+  button: {
+    background: 'var(--accent)',
+    color: '#fff',
+    border: 'none',
+    borderRadius: 6,
+    padding: '8px 12px',
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: 'pointer',
+  },
+  historyItem: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4,
+    padding: '8px 10px',
+    borderRadius: 8,
+    border: '1px solid var(--border)',
+    background: 'rgba(255,255,255,0.02)',
+  },
 };
 
 export function App() {
   const [url, setUrl] = useState('');
-  const [mode, setMode] = useState<RunMode>('prepare-draft');
+  const [mode, setMode] = useState<RunMode>(DEFAULT_SETTINGS.defaultMode);
   const [captionOverride, setCaptionOverride] = useState('');
   const [job, setJob] = useState<JobState | null>(null);
+  const [jobSource, setJobSource] = useState<JobStateSource>('none');
+  const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
+  const [settingsDraft, setSettingsDraft] = useState<UserSettings>(DEFAULT_SETTINGS);
+  const [settingsStatus, setSettingsStatus] = useState('');
+  const [history, setHistory] = useState<JobState[]>([]);
 
   // Listen for job state broadcasts
   useEffect(() => {
     const listener = (message: RuntimeMessage) => {
       if (message.action === 'JOB_STATE_UPDATE') {
         setJob((message as JobStateUpdateMessage).state);
+        setJobSource('live');
       }
     };
     chrome.runtime.onMessage.addListener(listener);
 
-    // Recover last job state on popup open
+    chrome.runtime.sendMessage(
+      { action: 'GET_SETTINGS' },
+      (resp: { settings?: UserSettings | null }) => {
+        const nextSettings = normalizeUserSettings(resp?.settings ?? DEFAULT_SETTINGS);
+        setSettings(nextSettings);
+        setSettingsDraft(nextSettings);
+        setMode(nextSettings.defaultMode);
+      },
+    );
+
     chrome.runtime.sendMessage(
       { action: 'GET_JOB_STATE' },
-      (resp: { state: JobState | null }) => {
-        if (resp?.state) setJob(resp.state);
+      (resp: { state: JobState | null; source?: JobStateSource }) => {
+        if (resp?.state) {
+          setJob(resp.state);
+          setJobSource(resp.source ?? 'persisted');
+        }
+      },
+    );
+
+    chrome.runtime.sendMessage(
+      { action: 'GET_JOB_HISTORY' },
+      (resp: { history?: JobState[] }) => {
+        setHistory(resp?.history ?? []);
       },
     );
 
@@ -78,6 +194,7 @@ export function App() {
   }, []);
 
   const handleStart = useCallback(() => {
+    setJobSource('live');
     chrome.runtime.sendMessage({
       action: 'START_JOB',
       sourceUrl: url,
@@ -90,11 +207,34 @@ export function App() {
     chrome.runtime.sendMessage({ action: 'CANCEL_JOB' });
   }, []);
 
+  const handleSaveSettings = useCallback(() => {
+    const nextSettings = normalizeUserSettings(settingsDraft);
+    setSettingsStatus('Saving settings…');
+    chrome.runtime.sendMessage(
+      {
+        action: 'SAVE_SETTINGS',
+        settings: nextSettings,
+      },
+      (resp: { settings?: UserSettings | null; error?: string }) => {
+        if (!resp?.settings) {
+          setSettingsStatus(resp?.error ?? 'Failed to save settings');
+          return;
+        }
+
+        setSettings(resp.settings);
+        setSettingsDraft(resp.settings);
+        setMode(resp.settings.defaultMode);
+        setSettingsStatus('Settings saved');
+      },
+    );
+  }, [settingsDraft]);
+
   const isRunning =
     job !== null &&
-    job.phase !== 'idle' &&
-    job.phase !== 'completed' &&
-    job.phase !== 'failed';
+    jobSource === 'live' &&
+    isRunningPhase(job.phase);
+
+  const isRestoredSnapshot = job !== null && jobSource === 'persisted';
 
   const statusColor =
     job?.phase === 'completed'
@@ -118,6 +258,83 @@ export function App() {
 
       {/* Mode Toggle */}
       <ModeToggle value={mode} onChange={setMode} disabled={isRunning} />
+
+      <div style={styles.section}>
+        <div style={styles.sectionTitle}>Settings</div>
+        <div style={styles.row}>
+          <label htmlFor="default-mode" style={styles.helperText}>Default mode</label>
+          <select
+            id="default-mode"
+            value={settingsDraft.defaultMode}
+            onChange={(e) => {
+              const nextMode = e.target.value as RunMode;
+              setSettingsDraft((current) => ({ ...current, defaultMode: nextMode }));
+              if (!isRunning) {
+                setMode(nextMode);
+              }
+            }}
+            style={styles.smallInput}
+          >
+            <option value="prepare-draft">Draft</option>
+            <option value="auto-post">Auto-post</option>
+          </select>
+        </div>
+
+        <label style={styles.row}>
+          <span style={styles.helperText}>Include source credit</span>
+          <input
+            type="checkbox"
+            checked={settingsDraft.includeSourceCredit}
+            onChange={(e) => {
+              setSettingsDraft((current) => ({ ...current, includeSourceCredit: e.target.checked }));
+            }}
+          />
+        </label>
+
+        <div style={styles.row}>
+          <label htmlFor="max-hashtags" style={styles.helperText}>Max hashtags</label>
+          <input
+            id="max-hashtags"
+            type="number"
+            min={USER_SETTINGS_LIMITS.minHashtags}
+            max={USER_SETTINGS_LIMITS.maxHashtags}
+            value={settingsDraft.maxHashtags}
+            onChange={(e) => {
+              const nextValue = Number(e.target.value);
+              setSettingsDraft((current) => ({
+                ...current,
+                maxHashtags: Number.isFinite(nextValue)
+                  ? Math.min(USER_SETTINGS_LIMITS.maxHashtags, Math.max(USER_SETTINGS_LIMITS.minHashtags, nextValue))
+                  : USER_SETTINGS_LIMITS.minHashtags,
+              }));
+            }}
+            style={styles.smallInput}
+          />
+        </div>
+
+        <div>
+          <label htmlFor="caption-template" style={{ ...styles.helperText, display: 'block', marginBottom: 4 }}>
+            Caption template
+          </label>
+          <textarea
+            id="caption-template"
+            value={settingsDraft.captionTemplate}
+            onChange={(e) => {
+              setSettingsDraft((current) => ({ ...current, captionTemplate: e.target.value }));
+            }}
+            rows={4}
+            style={{ ...styles.input, resize: 'vertical' }}
+          />
+          <div style={styles.helperText}>Use placeholders: {'{caption}'}, {'{hashtags}'}, {'{source}'}</div>
+        </div>
+
+        <div style={styles.row}>
+          <button type="button" style={styles.button} onClick={handleSaveSettings}>
+            Save settings
+          </button>
+          <span style={styles.helperText}>{settingsStatus || `Current mode: ${settings.defaultMode}`}</span>
+        </div>
+      </div>
 
       {/* Caption Override */}
       <div>
@@ -151,16 +368,38 @@ export function App() {
 
       {/* Status badge */}
       {job && (
-        <div
-          style={{
-            ...styles.status,
-            color: statusColor,
-            border: `1px solid ${statusColor}`,
-          }}
-        >
-          {job.phase.replace(/-/g, ' ').toUpperCase()}
-          {job.error ? ` — ${job.error}` : ''}
-        </div>
+        <>
+          <div
+            style={{
+              ...styles.status,
+              color: statusColor,
+              border: `1px solid ${statusColor}`,
+            }}
+          >
+            {job.phase.replace(/-/g, ' ').toUpperCase()}
+            {job.error ? ` — ${job.error}` : ''}
+          </div>
+
+          {isRestoredSnapshot && (
+            <div style={{ ...styles.section, gap: 4 }}>
+              <div style={styles.sectionTitle}>Recovered snapshot</div>
+              <div style={styles.helperText}>
+                This state was restored from local storage and is shown as historical context, not an active background run.
+              </div>
+              <div style={styles.helperText}>Last update: {formatTimestamp(job.updatedAt)}</div>
+            </div>
+          )}
+
+          {job.error && (
+            <div style={{ ...styles.section, gap: 4 }}>
+              <div style={styles.sectionTitle}>Recovery hint</div>
+              <div style={styles.errorText}>{job.error}</div>
+              <div style={styles.helperText}>
+                {job.errorCode ? ERROR_RECOVERY_HINTS[job.errorCode] : 'Check the runtime log for the failing layer and retry.'}
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* Run / Cancel */}
@@ -173,6 +412,24 @@ export function App() {
 
       {/* Logs */}
       {job && job.logs.length > 0 && <LogPanel logs={job.logs} />}
+
+      <div style={styles.section}>
+        <div style={styles.sectionTitle}>Recent jobs</div>
+        {history.length === 0 ? (
+          <div style={styles.helperText}>No saved job history yet.</div>
+        ) : (
+          history.slice(0, 5).map((entry) => (
+            <div key={`${entry.jobId}-${entry.updatedAt ?? ''}`} style={styles.historyItem}>
+              <div style={{ ...styles.row, alignItems: 'flex-start' }}>
+                <strong style={{ fontSize: 12 }}>{entry.phase.replace(/-/g, ' ').toUpperCase()}</strong>
+                <span style={styles.helperText}>{formatTimestamp(entry.updatedAt ?? entry.createdAt)}</span>
+              </div>
+              <div style={styles.helperText}>{entry.sourceUrl}</div>
+              {entry.error && <div style={{ fontSize: 12, color: 'var(--danger)' }}>{entry.error}</div>}
+            </div>
+          ))
+        )}
+      </div>
     </div>
   );
 }

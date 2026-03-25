@@ -1,7 +1,7 @@
 import { vi } from 'vitest';
 
 import type { RuntimeMessage } from '@shared/messages';
-import type { JobState } from '@shared/types';
+import { DEFAULT_SETTINGS, type JobState, type UserSettings } from '@shared/types';
 
 type MockTab = Pick<chrome.tabs.Tab, 'url'>;
 type RuntimeListener = (message: RuntimeMessage) => void;
@@ -30,6 +30,9 @@ export interface ChromeMock {
   __mock: {
     setTabsQueryResult(tabs: MockTab[]): void;
     setJobStateResponse(state: JobState | null): void;
+    setJobStateSource(source: 'live' | 'persisted' | 'none'): void;
+    setSettingsResponse(settings: UserSettings): void;
+    setHistoryResponse(history: JobState[]): void;
     dispatchRuntimeMessage(message: RuntimeMessage): void;
   };
 }
@@ -38,12 +41,31 @@ export function createChromeMock(): ChromeMock {
   const runtimeListeners = new Set<RuntimeListener>();
   let tabsQueryResult: MockTab[] = [];
   let jobStateResponse: JobState | null = null;
+  let jobStateSource: 'live' | 'persisted' | 'none' = 'none';
+  let settingsResponse: UserSettings = DEFAULT_SETTINGS;
+  let historyResponse: JobState[] = [];
 
   const chromeMock: ChromeMock = {
     runtime: {
-      sendMessage: vi.fn((message?: { action?: string }, callback?: (response: unknown) => void) => {
+      sendMessage: vi.fn((message?: { action?: string; settings?: Partial<UserSettings> }, callback?: (response: unknown) => void) => {
         if (message?.action === 'GET_JOB_STATE' && callback) {
-          callback({ state: jobStateResponse });
+          callback({ state: jobStateResponse, source: jobStateSource });
+        }
+
+        if (message?.action === 'GET_SETTINGS' && callback) {
+          callback({ settings: settingsResponse });
+        }
+
+        if (message?.action === 'SAVE_SETTINGS' && callback) {
+          settingsResponse = {
+            ...settingsResponse,
+            ...(message.settings ?? {}),
+          };
+          callback({ settings: settingsResponse });
+        }
+
+        if (message?.action === 'GET_JOB_HISTORY' && callback) {
+          callback({ history: historyResponse });
         }
       }),
       onMessage: {
@@ -76,6 +98,15 @@ export function createChromeMock(): ChromeMock {
       },
       setJobStateResponse(state) {
         jobStateResponse = state;
+      },
+      setJobStateSource(source) {
+        jobStateSource = source;
+      },
+      setSettingsResponse(settings) {
+        settingsResponse = settings;
+      },
+      setHistoryResponse(history) {
+        historyResponse = history;
       },
       dispatchRuntimeMessage(message) {
         for (const listener of runtimeListeners) {

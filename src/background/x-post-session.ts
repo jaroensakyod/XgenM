@@ -57,6 +57,7 @@ function logVisibleVerification(
   log(
     `Visible verification [proof]: status=${evidence.proofStatus} ` +
       `selector=${evidence.targetSelector} ` +
+      `strategy=${evidence.insertionStrategy} ` +
       `match=${evidence.visibleMatchesExpected ? 'yes' : 'no'} ` +
       `chars=${evidence.visibleText.length}`,
   );

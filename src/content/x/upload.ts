@@ -104,6 +104,11 @@ function isPostButtonEnabled(): boolean {
   });
 }
 
+export interface UploadCompletionResult {
+  completed: boolean;
+  detail: string;
+}
+
 /**
  * Locate the file input and attach a video file to it.
  */
@@ -137,9 +142,10 @@ export async function attachMedia(
  * Wait until the media upload finishes processing on X.
  * Returns true if upload completed, false if timed out.
  */
-export async function waitForUploadComplete(): Promise<boolean> {
+export async function waitForUploadComplete(): Promise<UploadCompletionResult> {
   const start = Date.now();
   let sawProgress = false;
+  let sawComplete = false;
   let lastState = '';
 
   // First wait for progress indicator to appear (upload started)
@@ -170,9 +176,16 @@ export async function waitForUploadComplete(): Promise<boolean> {
       lastState = state;
     }
 
+    if (hasComplete) {
+      sawComplete = true;
+    }
+
     if (!hasProgress && hasComplete && postReady) {
       debugLog('Upload complete indicator detected and Post button is enabled.');
-      return true;
+      return {
+        completed: true,
+        detail: `Upload complete via thumbnail indicator and enabled Post button (${state}).`,
+      };
     }
 
     if (!hasProgress && hasComplete && !postReady && sawProgress) {
@@ -182,6 +195,14 @@ export async function waitForUploadComplete(): Promise<boolean> {
     await sleep(ELEMENT_POLL_INTERVAL);
   }
 
-  debugLog('Timed out waiting for upload completion indicator.');
-  return false;
+  const timeoutDetail = !sawProgress
+    ? 'Timed out before any X upload progress indicator appeared.'
+    : sawComplete
+      ? 'Timed out after attachment became visible, but Post never became enabled.'
+      : 'Timed out while upload progress indicators were still unresolved.';
+  debugLog(timeoutDetail);
+  return {
+    completed: false,
+    detail: timeoutDetail,
+  };
 }
