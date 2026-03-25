@@ -18,13 +18,14 @@ import {
   EXTRACTION_TIMEOUT,
   VIDEO_FETCH_TIMEOUT,
 } from '@shared/constants';
-import { detectPlatform } from '@shared/url';
+import { detectPlatform, extractTikTokAuthorHandleFromUrl } from '@shared/url';
 import { buildPostText, extractHashtags, truncateForX } from '@shared/text';
 import { buildSourceLabel } from '@shared/url';
 import { sleep } from '@shared/timing';
-import { ExtensionError } from '@shared/errors';
+import { ERROR_DESCRIPTIONS, ExtensionError } from '@shared/errors';
 import { openOrFocusTab, waitForTabLoad, sendToTab } from './tab-manager';
 import { loadSettings, saveLastJob, appendJobHistory } from './storage';
+import { runXPostSession } from './x-post-session';
 
 // ---------------------------------------------------------------------------
 // State
@@ -46,6 +47,7 @@ export function appendRuntimeLog(text: string): void {
 // ---------------------------------------------------------------------------
 
 function broadcast(job: JobState): void {
+  job.updatedAt = new Date().toISOString();
   chrome.runtime.sendMessage({ action: 'JOB_STATE_UPDATE', state: job }).catch(() => {
     // popup may be closed — ignore
   });
@@ -219,6 +221,8 @@ async function fetchTikTokPageFallback(sourceUrl: string): Promise<Partial<Extra
       extractMetaContent(html, 'og:url', 'property') ||
       findFirstMatch(html, [/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i]) ||
       sourceUrl;
+    const authorHandleFromUrl = extractTikTokAuthorHandleFromUrl(canonicalUrl)
+      || extractTikTokAuthorHandleFromUrl(sourceUrl);
 
     if (!captionRaw && !authorHandle && !authorName && !videoUrl) {
       return null;
@@ -229,7 +233,7 @@ async function fetchTikTokPageFallback(sourceUrl: string): Promise<Partial<Extra
       sourceUrl,
       canonicalUrl,
       authorName,
-      authorHandle,
+      authorHandle: authorHandleFromUrl || authorHandle,
       captionRaw,
       hashtags: extractHashtags(captionRaw),
       videoUrl,
@@ -325,6 +329,8 @@ export async function startJob(
     sourceUrl,
     platform,
     phase: 'idle',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
     logs: [],
   };
 
@@ -460,73 +466,40 @@ export async function startJob(
       log('Media uploaded successfully.');
     }
 
-    // ---- Phase 7: Fill composer ----
+    // ---- Phase 7+8: Compose + Post (delegated to x-post-session) ----
     currentJob.phase = 'filling-composer';
-    log(videoDataUrl ? 'Typing caption after media upload…' : 'Filling composer…');
     broadcast(currentJob);
 
-    const composeResult = await sendToTab<XActionResultMessage>(xTab.id, {
-      action: 'COMPOSE_POST',
-      text: postText,
-    });
+    const sessionOutcome = await runXPostSession(
+      xTab.id,
+      postText,
+      mode,
+      !!videoDataUrl,
+      {
+        sendToTab,
+        log,
+        onPhaseChange: (phase) => {
+          currentJob!.phase = phase;
+          broadcast(currentJob!);
+        },
+      },
+    );
 
-    if (!composeResult.success) {
-      throw new ExtensionError(
-        composeResult.error ?? 'Composer fill failed',
-        'X_COMPOSER_NOT_FOUND',
-      );
-    }
-    log(videoDataUrl ? 'Caption typed after media upload.' : 'Text inserted into composer.');
-
-    // ---- Phase 8: Post or await review ----
-    if (mode === 'auto-post') {
-      currentJob.phase = 'posting';
-      log('Verifying caption before posting…');
-
-      const finalComposeResult = await sendToTab<XActionResultMessage>(xTab.id, {
-        action: 'COMPOSE_POST',
-        text: postText,
-      });
-
-      if (!finalComposeResult.success) {
-        throw new ExtensionError(
-          finalComposeResult.error ?? 'Final caption verification failed',
-          'X_COMPOSER_NOT_FOUND',
-          true,
-        );
-      }
-
-      log('Caption verified before posting.');
-      log('Clicking Post…');
-      broadcast(currentJob);
-
-      const postResult = await sendToTab<XActionResultMessage>(xTab.id, {
-        action: 'CLICK_POST',
-      });
-
-      if (!postResult.success) {
-        throw new ExtensionError(
-          postResult.error ?? 'Post click failed',
-          'POST_BUTTON_UNAVAILABLE',
-          true,
-        );
-      }
-      log('Posted successfully!');
+    if (sessionOutcome.result === 'posted') {
+      currentJob.phase = 'completed';
+      log('Job completed.');
     } else {
+      // awaiting-review
       currentJob.phase = 'awaiting-review';
-      log('Draft ready — review and post manually when ready.');
-      broadcast(currentJob);
     }
-
-    // ---- Done ----
-    currentJob.phase = 'completed';
-    log('Job completed.');
     broadcast(currentJob);
     appendJobHistory(currentJob);
   } catch (err) {
     currentJob.phase = 'failed';
     const message = err instanceof Error ? err.message : String(err);
-    currentJob.error = message;
+    const errorCode = err instanceof ExtensionError ? err.code : 'UNKNOWN';
+    currentJob.errorCode = errorCode;
+    currentJob.error = ERROR_DESCRIPTIONS[errorCode] ?? message;
     log(`Error: ${message}`);
     broadcast(currentJob);
     appendJobHistory(currentJob);
@@ -536,7 +509,8 @@ export async function startJob(
 export function cancelJob(): void {
   if (currentJob && currentJob.phase !== 'completed' && currentJob.phase !== 'failed') {
     currentJob.phase = 'failed';
-    currentJob.error = 'Cancelled by user';
+    currentJob.errorCode = 'CANCELLED';
+    currentJob.error = ERROR_DESCRIPTIONS.CANCELLED;
     log('Job cancelled.');
     broadcast(currentJob);
   }

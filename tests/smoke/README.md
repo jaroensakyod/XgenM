@@ -1,0 +1,1 @@
+Reserved for future browser-smoke coverage after the deterministic Vitest layer is stable.

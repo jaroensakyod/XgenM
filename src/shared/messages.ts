@@ -3,10 +3,12 @@
 // ---------------------------------------------------------------------------
 
 import type {
+  ComposeEvidence,
   ExtractedSourceData,
   JobPhase,
   JobState,
   RunMode,
+  UserSettings,
 } from './types';
 
 // ---- Action discriminators ----
@@ -15,6 +17,9 @@ export type MessageAction =
   | 'START_JOB'
   | 'CANCEL_JOB'
   | 'GET_JOB_STATE'
+  | 'GET_SETTINGS'
+  | 'SAVE_SETTINGS'
+  | 'GET_JOB_HISTORY'
   | 'JOB_STATE_UPDATE'
   | 'EXTRACT_SOURCE'
   | 'EXTRACTION_RESULT'
@@ -40,6 +45,19 @@ export interface CancelJobMessage {
 
 export interface GetJobStateMessage {
   action: 'GET_JOB_STATE';
+}
+
+export interface GetSettingsMessage {
+  action: 'GET_SETTINGS';
+}
+
+export interface SaveSettingsMessage {
+  action: 'SAVE_SETTINGS';
+  settings: Partial<UserSettings>;
+}
+
+export interface GetJobHistoryMessage {
+  action: 'GET_JOB_HISTORY';
 }
 
 export interface JobStateUpdateMessage {
@@ -78,6 +96,8 @@ export interface XActionResultMessage {
   step: 'compose' | 'upload' | 'post';
   success: boolean;
   error?: string;
+  /** Structured compose evidence (present only when step === 'compose') */
+  evidence?: ComposeEvidence;
 }
 
 export interface FetchVideoBlobMessage {
@@ -97,6 +117,9 @@ export type RuntimeMessage =
   | StartJobMessage
   | CancelJobMessage
   | GetJobStateMessage
+  | GetSettingsMessage
+  | SaveSettingsMessage
+  | GetJobHistoryMessage
   | JobStateUpdateMessage
   | ExtractSourceMessage
   | ExtractionResultMessage

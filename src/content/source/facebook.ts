@@ -9,6 +9,7 @@
 import type { ExtractedSourceData, ExtractionMethod } from '@shared/types';
 import type { ExtractionResultMessage, RuntimeMessage } from '@shared/messages';
 import { extractHashtags } from '@shared/text';
+import { sleep } from '@shared/timing';
 import { runInPageContext } from './page-bridge';
 
 // ---------------------------------------------------------------------------
@@ -16,6 +17,8 @@ import { runInPageContext } from './page-bridge';
 // ---------------------------------------------------------------------------
 
 const CAPTION_SELECTORS = [
+  'div[data-ad-comet-preview="message"] span',
+  'div[aria-describedby] div[dir="auto"] span',
   'div[data-ad-rendering-role="story_message"] span',
   'div[dir="auto"][style] span',
   'div[data-testid="post_message"] span',
@@ -28,6 +31,45 @@ const VIDEO_SELECTORS = [
   'video',
 ];
 
+const META_CAPTION_SELECTORS: Array<{ selector: string; attribute: string }> = [
+  { selector: 'meta[property="og:description"]', attribute: 'content' },
+  { selector: 'meta[name="description"]', attribute: 'content' },
+  { selector: 'meta[property="twitter:description"]', attribute: 'content' },
+];
+
+const META_VIDEO_SELECTORS: Array<{ selector: string; attribute: string }> = [
+  { selector: 'meta[property="og:video"]', attribute: 'content' },
+  { selector: 'meta[property="og:video:url"]', attribute: 'content' },
+  { selector: 'meta[itemprop="contentUrl"]', attribute: 'content' },
+];
+
+const EMBEDDED_VIDEO_PATTERNS = [
+  /"browser_native_hd_url":"(https?:[^\"]+)"/i,
+  /"browser_native_sd_url":"(https?:[^\"]+)"/i,
+  /"playable_url_quality_hd":"(https?:[^\"]+)"/i,
+  /"playable_url":"(https?:[^\"]+)"/i,
+  /"hd_src_no_ratelimit":"(https?:[^\"]+)"/i,
+  /"sd_src_no_ratelimit":"(https?:[^\"]+)"/i,
+  /"hd_src":"(https?:[^\"]+)"/i,
+  /"sd_src":"(https?:[^\"]+)"/i,
+  /"contentUrl":"(https?:[^\"]+)"/i,
+];
+
+const EMBEDDED_CAPTION_PATTERNS = [
+  /"message":\{"text":"([^\"]+)"/i,
+  /"story":\{"message":\{"text":"([^\"]+)"/i,
+  /"creation_story":\{.*?"message":\{"text":"([^\"]+)"/i,
+  /"title":\{"text":"([^\"]+)"/i,
+];
+
+function debugLog(text: string): void {
+  chrome.runtime.sendMessage({
+    action: 'LOG',
+    text: `[facebook] ${text}`,
+    phase: 'extracting',
+  }).catch(() => {});
+}
+
 // ---------------------------------------------------------------------------
 // Extraction
 // ---------------------------------------------------------------------------
@@ -38,6 +80,43 @@ function queryFirst(selectors: string[]): string {
     if (el?.textContent?.trim()) return el.textContent.trim();
   }
   return '';
+}
+
+function queryMeta(selectors: Array<{ selector: string; attribute: string }>): string {
+  for (const { selector, attribute } of selectors) {
+    const value = document.querySelector(selector)?.getAttribute(attribute)?.trim();
+    if (value) return decodeFacebookEscapedText(value);
+  }
+  return '';
+}
+
+export function decodeFacebookEscapedText(value: string): string {
+  return value
+    .replace(/\\u0025/g, '%')
+    .replace(/\\u0026/gi, '&')
+    .replace(/\\u002F/gi, '/')
+    .replace(/\\\//g, '/')
+    .replace(/\\n/g, '\n')
+    .replace(/\\"/g, '"')
+    .replace(/&amp;/gi, '&')
+    .trim();
+}
+
+export function extractEmbeddedFacebookData(payloadText: string): {
+  captionRaw?: string;
+  videoUrl?: string;
+} {
+  const videoUrl = EMBEDDED_VIDEO_PATTERNS
+    .map((pattern) => payloadText.match(pattern)?.[1])
+    .find(Boolean);
+  const captionRaw = EMBEDDED_CAPTION_PATTERNS
+    .map((pattern) => payloadText.match(pattern)?.[1])
+    .find(Boolean);
+
+  return {
+    captionRaw: captionRaw ? decodeFacebookEscapedText(captionRaw) : undefined,
+    videoUrl: videoUrl ? decodeFacebookEscapedText(videoUrl) : undefined,
+  };
 }
 
 function findVideoUrl(): { url: string | undefined; method: ExtractionMethod } {
@@ -63,7 +142,7 @@ function findVideoUrl(): { url: string | undefined; method: ExtractionMethod } {
   return { url: undefined, method: 'unknown' };
 }
 
-async function tryReactPayload(): Promise<string | undefined> {
+async function tryReactPayload(): Promise<{ captionRaw?: string; videoUrl?: string }> {
   try {
     return await runInPageContext(() => {
       // Facebook sometimes has video URLs in script tags as JSON
@@ -71,36 +150,82 @@ async function tryReactPayload(): Promise<string | undefined> {
       for (const s of scripts) {
         try {
           const text = s.textContent ?? '';
-          // Look for HD video URL patterns
-          const hdMatch = text.match(/"hd_src":"(https?:[^"]+)"/);
-          if (hdMatch?.[1]) return hdMatch[1].replace(/\\\//g, '/');
+          const extracted = {
+            captionRaw: undefined as string | undefined,
+            videoUrl: undefined as string | undefined,
+          };
 
-          const sdMatch = text.match(/"sd_src":"(https?:[^"]+)"/);
-          if (sdMatch?.[1]) return sdMatch[1].replace(/\\\//g, '/');
+          const videoPatterns = [
+            /"browser_native_hd_url":"(https?:[^\"]+)"/i,
+            /"browser_native_sd_url":"(https?:[^\"]+)"/i,
+            /"playable_url_quality_hd":"(https?:[^\"]+)"/i,
+            /"playable_url":"(https?:[^\"]+)"/i,
+            /"hd_src":"(https?:[^\"]+)"/i,
+            /"sd_src":"(https?:[^\"]+)"/i,
+          ];
+          for (const pattern of videoPatterns) {
+            const matched = text.match(pattern)?.[1];
+            if (matched) {
+              extracted.videoUrl = matched
+                .replace(/\\u002F/gi, '/')
+                .replace(/\\\//g, '/');
+              break;
+            }
+          }
+
+          const captionPatterns = [
+            /"message":\{"text":"([^\"]+)"/i,
+            /"story":\{"message":\{"text":"([^\"]+)"/i,
+            /"title":\{"text":"([^\"]+)"/i,
+          ];
+          for (const pattern of captionPatterns) {
+            const matched = text.match(pattern)?.[1];
+            if (matched) {
+              extracted.captionRaw = matched
+                .replace(/\\u0026/gi, '&')
+                .replace(/\\u002F/gi, '/')
+                .replace(/\\\//g, '/')
+                .replace(/\\n/g, '\n')
+                .replace(/\\"/g, '"');
+              break;
+            }
+          }
+
+          if (extracted.videoUrl || extracted.captionRaw) {
+            return extracted;
+          }
         } catch {
           continue;
         }
       }
-      return undefined;
+      return {};
     });
   } catch {
-    return undefined;
+    return {};
   }
 }
 
-async function extract(): Promise<ExtractedSourceData> {
-  const captionRaw = queryFirst(CAPTION_SELECTORS);
-  const hashtags = extractHashtags(captionRaw);
-
+async function extractOnce(): Promise<ExtractedSourceData> {
+  const captionFromDom = queryFirst(CAPTION_SELECTORS);
+  const captionFromMeta = queryMeta(META_CAPTION_SELECTORS);
   let { url: videoUrl, method: extractionMethod } = findVideoUrl();
 
   if (!videoUrl) {
-    const payloadUrl = await tryReactPayload();
-    if (payloadUrl) {
-      videoUrl = payloadUrl;
+    const metaVideoUrl = queryMeta(META_VIDEO_SELECTORS);
+    if (metaVideoUrl) {
+      videoUrl = metaVideoUrl;
       extractionMethod = 'embedded-state';
     }
   }
+
+  const payload = await tryReactPayload();
+  if (!videoUrl && payload.videoUrl) {
+    videoUrl = payload.videoUrl;
+    extractionMethod = 'embedded-state';
+  }
+
+  const captionRaw = captionFromDom || payload.captionRaw || captionFromMeta;
+  const hashtags = extractHashtags(captionRaw);
 
   return {
     platform: 'facebook',
@@ -114,16 +239,46 @@ async function extract(): Promise<ExtractedSourceData> {
   };
 }
 
+async function extract(): Promise<ExtractedSourceData> {
+  const attempts = 3;
+  let lastData: ExtractedSourceData | null = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const data = await extractOnce();
+    lastData = data;
+    if (data.captionRaw || data.videoUrl || attempt === attempts) {
+      debugLog(
+        `Extraction attempt ${attempt}/${attempts}: caption=${data.captionRaw ? 'yes' : 'no'} ` +
+        `video=${data.videoUrl ? 'yes' : 'no'} method=${data.extractionMethod}`,
+      );
+      return data;
+    }
+
+    debugLog(`Extraction attempt ${attempt}/${attempts} returned weak Facebook data; retrying.`);
+    await sleep(1_000);
+  }
+
+  return lastData ?? {
+    platform: 'facebook',
+    sourceUrl: window.location.href,
+    canonicalUrl: window.location.href.split('?')[0],
+    captionRaw: '',
+    hashtags: [],
+    extractionMethod: 'unknown',
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Video blob fetch helper
 // ---------------------------------------------------------------------------
 
 async function fetchVideoBlob(): Promise<{ success: boolean; dataUrl?: string }> {
   const video = document.querySelector('video') as HTMLVideoElement | null;
-  if (!video?.src) return { success: false };
+  const sourceUrl = video?.currentSrc || video?.src;
+  if (!sourceUrl) return { success: false };
 
   try {
-    const resp = await fetch(video.src);
+    const resp = await fetch(sourceUrl);
     const blob = await resp.blob();
     return new Promise((resolve) => {
       const reader = new FileReader();

@@ -5,6 +5,7 @@
 import type { ExtractedSourceData, ExtractionMethod } from '@shared/types';
 import type { ExtractionResultMessage, RuntimeMessage } from '@shared/messages';
 import { extractHashtags } from '@shared/text';
+import { extractTikTokAuthorHandleFromUrl } from '@shared/url';
 import { fetchBlobUrlInPageContext, revokeObjectUrlInPageContext } from './page-bridge';
 
 // ---------------------------------------------------------------------------
@@ -440,6 +441,9 @@ function findMetadata(): Pick<ExtractedSourceData, 'captionRaw' | 'authorHandle'
 
   const canonicalMeta = queryFirstAttr(['meta[property="og:url"]']);
   const canonicalLink = queryFirstAttr(['link[rel="canonical"]'], 'href');
+  const canonicalUrl = canonicalMeta || canonicalLink || window.location.href.split('?')[0];
+  const authorHandleFromUrl = extractTikTokAuthorHandleFromUrl(canonicalUrl)
+    || extractTikTokAuthorHandleFromUrl(window.location.href);
 
   return {
     captionRaw: pickCaptionCandidate(
@@ -450,9 +454,9 @@ function findMetadata(): Pick<ExtractedSourceData, 'captionRaw' | 'authorHandle'
       captionFromVisibleText,
       captionFromTitle,
     ),
-    authorHandle: authorHandleFromDom || authorHandleFromJson || authorHandleFromRegex || undefined,
+    authorHandle: authorHandleFromUrl || authorHandleFromDom || authorHandleFromJson || authorHandleFromRegex || undefined,
     authorName: authorNameFromDom || authorNameFromJson || undefined,
-    canonicalUrl: canonicalMeta || canonicalLink || window.location.href.split('?')[0],
+    canonicalUrl,
   };
 }
 

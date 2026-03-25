@@ -1,3 +1,5 @@
+import type { ErrorCode } from './errors';
+
 // ---------------------------------------------------------------------------
 // Domain types — shared across background, popup, and content scripts
 // ---------------------------------------------------------------------------
@@ -61,10 +63,54 @@ export interface JobState {
   sourceUrl: string;
   platform: SourcePlatform;
   phase: JobPhase;
+  createdAt?: string;
+  updatedAt?: string;
   extraction?: ExtractedSourceData;
   preparedPost?: PreparedPost;
   logs: string[];
   error?: string;
+  errorCode?: ErrorCode;
+}
+
+// ---------------------------------------------------------------------------
+// X Compose / Post evidence contract
+// ---------------------------------------------------------------------------
+
+/** Proof status classifying how reliably the composer state was verified */
+export type ComposeProofStatus =
+  | 'visible-only'   // Text appears in DOM but no submit-state evidence
+  | 'draft-ready'    // Text verified and insertion acknowledged, safe for review
+  | 'submit-ready'   // Full evidence: visible + tracked editor state matches
+  | 'proof-failed';  // Verification attempted but failed
+
+/** Strategy label describing how text was inserted into the composer */
+export type InsertionStrategyLabel = 'paste' | 'execCommand' | 'fallback-typing' | 'failed';
+
+/** Structured evidence returned by the X content script after compose */
+export interface ComposeEvidence {
+  proofStatus: ComposeProofStatus;
+  /** The selector strategy used to locate the composer */
+  targetSelector: string;
+  /** The insertion strategy that was applied */
+  insertionStrategy: InsertionStrategyLabel;
+  /** Normalized visible text read back from the composer */
+  visibleText: string;
+  /** Whether the visible text matches the expected text */
+  visibleMatchesExpected: boolean;
+  /** Optional error detail if proof-failed */
+  errorDetail?: string;
+}
+
+/** Determines whether an evidence object meets the threshold for auto-posting */
+export function isSubmitEligible(evidence: ComposeEvidence): boolean {
+  return evidence.proofStatus === 'submit-ready';
+}
+
+/** Determines whether evidence is at least good enough for draft review */
+export function isDraftEligible(evidence: ComposeEvidence): boolean {
+  return evidence.proofStatus === 'submit-ready'
+    || evidence.proofStatus === 'draft-ready'
+    || evidence.proofStatus === 'visible-only';
 }
 
 // ---------------------------------------------------------------------------
@@ -84,3 +130,33 @@ export const DEFAULT_SETTINGS: UserSettings = {
   maxHashtags: 5,
   captionTemplate: '{caption}\n\n{hashtags}\n\nSource: {source}',
 };
+
+export const USER_SETTINGS_LIMITS = {
+  minHashtags: 0,
+  maxHashtags: 10,
+} as const;
+
+export function normalizeUserSettings(settings?: Partial<UserSettings> | null): UserSettings {
+  const maxHashtagsValue = Number(settings?.maxHashtags);
+  const maxHashtags = Number.isFinite(maxHashtagsValue)
+    ? Math.min(
+      USER_SETTINGS_LIMITS.maxHashtags,
+      Math.max(USER_SETTINGS_LIMITS.minHashtags, Math.trunc(maxHashtagsValue)),
+    )
+    : DEFAULT_SETTINGS.maxHashtags;
+
+  const defaultMode = settings?.defaultMode === 'auto-post'
+    ? 'auto-post'
+    : DEFAULT_SETTINGS.defaultMode;
+
+  const captionTemplate = settings?.captionTemplate?.trim()
+    ? settings.captionTemplate.trim()
+    : DEFAULT_SETTINGS.captionTemplate;
+
+  return {
+    defaultMode,
+    includeSourceCredit: settings?.includeSourceCredit ?? DEFAULT_SETTINGS.includeSourceCredit,
+    maxHashtags,
+    captionTemplate,
+  };
+}

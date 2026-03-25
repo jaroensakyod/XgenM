@@ -48,3 +48,26 @@ export const ERROR_DESCRIPTIONS: Record<ErrorCode, string> = {
   UNKNOWN:
     'An unexpected error occurred.',
 };
+
+export const ERROR_RECOVERY_HINTS: Record<ErrorCode, string> = {
+  UNSUPPORTED_URL:
+    'Open a supported TikTok video or Facebook Reel URL, then retry from the side panel.',
+  EXTRACTION_FAILED:
+    'Wait for the source page to fully render, scroll once to wake lazy content, and try again.',
+  VIDEO_FETCH_FAILED:
+    'Refresh the source tab and retry. If guarded media still fails, download the video manually and use draft mode.',
+  X_LOGIN_MISSING:
+    'Log in to X in the active browser profile and confirm the composer can open before retrying.',
+  X_COMPOSER_NOT_FOUND:
+    'Open X home or the new-post screen first. If the composer is visible and this still fails, selectors likely need an update.',
+  MEDIA_UPLOAD_FAILED:
+    'Let the X tab settle and retry once. If upload keeps failing, upload manually and continue in draft mode.',
+  POST_BUTTON_UNAVAILABLE:
+    'Check for disabled Post state, interstitials, or missing proof, then retry in draft mode if needed.',
+  TIMEOUT_EXCEEDED:
+    'Retry after the page is stable. Slow network or SPA rendering delays can trigger this timeout.',
+  CANCELLED:
+    'No recovery step is required. Start a new job when ready.',
+  UNKNOWN:
+    'Inspect the runtime logs to identify whether the failure was in extraction, video fetch, upload, composer, or submit gating.',
+};
