@@ -74,3 +74,15 @@ export async function setEntryStatus(
 ): Promise<QueueEntry[]> {
   return updateQueueEntry(id, { status, ...extra });
 }
+
+/**
+ * Remove all finished entries (completed, failed, cancelled).
+ * Keeps only pending and running entries.
+ * Returns the remaining entries.
+ */
+export async function clearFinishedEntries(): Promise<QueueEntry[]> {
+  const entries = await loadQueue();
+  const kept = entries.filter((e) => e.status === 'pending' || e.status === 'running');
+  await saveQueue(kept);
+  return kept;
+}

@@ -32,6 +32,8 @@ export type MessageAction =
   | 'LOG'
   | 'ADD_TO_QUEUE'
   | 'REMOVE_FROM_QUEUE'
+  | 'CANCEL_QUEUE_ENTRY'
+  | 'CLEAR_FINISHED_QUEUE'
   | 'GET_QUEUE'
   | 'QUEUE_UPDATE';
 
@@ -130,6 +132,17 @@ export interface RemoveFromQueueMessage {
   id: string;
 }
 
+/** Popup → Background: cancel a queue entry (marks as cancelled, keeps row) */
+export interface CancelQueueEntryMessage {
+  action: 'CANCEL_QUEUE_ENTRY';
+  id: string;
+}
+
+/** Popup → Background: remove all completed/failed/cancelled entries */
+export interface ClearFinishedQueueMessage {
+  action: 'CLEAR_FINISHED_QUEUE';
+}
+
 /** Popup → Background: request current queue state */
 export interface GetQueueMessage {
   action: 'GET_QUEUE';
@@ -161,5 +174,7 @@ export type RuntimeMessage =
   | LogMessage
   | AddToQueueMessage
   | RemoveFromQueueMessage
+  | CancelQueueEntryMessage
+  | ClearFinishedQueueMessage
   | GetQueueMessage
   | QueueUpdateMessage;

@@ -11,6 +11,8 @@ const loadJobHistoryMock = vi.fn();
 const loadQueueMock = vi.fn().mockResolvedValue([]);
 const addToQueueMock = vi.fn();
 const removeFromQueueMock = vi.fn();
+const setEntryStatusMock = vi.fn().mockResolvedValue([]);
+const clearFinishedEntriesMock = vi.fn().mockResolvedValue([]);
 const setNextAlarmMock = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('@background/job-runner', () => ({
@@ -31,8 +33,9 @@ vi.mock('@background/job-queue', () => ({
   loadQueue: loadQueueMock,
   addToQueue: addToQueueMock,
   removeFromQueue: removeFromQueueMock,
-  setEntryStatus: vi.fn().mockResolvedValue(undefined),
+  setEntryStatus: setEntryStatusMock,
   updateQueueEntry: vi.fn().mockResolvedValue(undefined),
+  clearFinishedEntries: clearFinishedEntriesMock,
 }));
 
 vi.mock('@background/alarm-manager', () => ({
@@ -65,6 +68,8 @@ describe('background message router', () => {
     loadQueueMock.mockReset().mockResolvedValue([]);
     addToQueueMock.mockReset();
     removeFromQueueMock.mockReset();
+    setEntryStatusMock.mockReset().mockResolvedValue([]);
+    clearFinishedEntriesMock.mockReset().mockResolvedValue([]);
     setNextAlarmMock.mockReset().mockResolvedValue(undefined);
 
     globalThis.chrome = {
@@ -216,6 +221,85 @@ describe('background message router', () => {
 
     expect(removeFromQueueMock).toHaveBeenCalledWith('e1');
     expect(setNextAlarmMock).toHaveBeenCalled();
+    expect(sendResponse).toHaveBeenCalledWith({ ack: true });
+  });
+
+  it('CANCEL_QUEUE_ENTRY for pending entry — marks cancelled, re-arms, broadcasts', async () => {
+    const pendingEntry = {
+      id: 'cancel-me',
+      status: 'pending',
+      sourceUrl: 'https://www.tiktok.com/@u/video/9',
+      mode: 'prepare-draft',
+      scheduledAt: Date.now() + 60_000,
+      createdAt: Date.now(),
+    };
+    loadQueueMock.mockResolvedValue([pendingEntry]);
+
+    const sendResponse = vi.fn();
+    listener(
+      { action: 'CANCEL_QUEUE_ENTRY', id: 'cancel-me' },
+      {} as chrome.runtime.MessageSender,
+      sendResponse,
+    );
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(setEntryStatusMock).toHaveBeenCalledWith('cancel-me', 'cancelled');
+    expect(setNextAlarmMock).toHaveBeenCalled();
+    expect(sendResponse).toHaveBeenCalledWith({ ack: true });
+  });
+
+  it('CANCEL_QUEUE_ENTRY for running entry — calls cancelJob, marks cancelled, re-arms', async () => {
+    const runningEntry = {
+      id: 'running-me',
+      status: 'running',
+      sourceUrl: 'https://www.tiktok.com/@u/video/10',
+      mode: 'auto-post',
+      scheduledAt: Date.now() + 60_000,
+      createdAt: Date.now(),
+    };
+    loadQueueMock.mockResolvedValue([runningEntry]);
+
+    const sendResponse = vi.fn();
+    listener(
+      { action: 'CANCEL_QUEUE_ENTRY', id: 'running-me' },
+      {} as chrome.runtime.MessageSender,
+      sendResponse,
+    );
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(cancelJobMock).toHaveBeenCalled();
+    expect(setEntryStatusMock).toHaveBeenCalledWith('running-me', 'cancelled');
+    expect(setNextAlarmMock).toHaveBeenCalled();
+    expect(sendResponse).toHaveBeenCalledWith({ ack: true });
+  });
+
+  it('CANCEL_QUEUE_ENTRY for unknown id — no-ops and responds ack', async () => {
+    loadQueueMock.mockResolvedValue([]);
+
+    const sendResponse = vi.fn();
+    listener(
+      { action: 'CANCEL_QUEUE_ENTRY', id: 'ghost' },
+      {} as chrome.runtime.MessageSender,
+      sendResponse,
+    );
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(setEntryStatusMock).not.toHaveBeenCalled();
+    expect(sendResponse).toHaveBeenCalledWith({ ack: true });
+  });
+
+  it('CLEAR_FINISHED_QUEUE — calls clearFinishedEntries and responds ack', async () => {
+    clearFinishedEntriesMock.mockResolvedValue([]);
+
+    const sendResponse = vi.fn();
+    listener(
+      { action: 'CLEAR_FINISHED_QUEUE' },
+      {} as chrome.runtime.MessageSender,
+      sendResponse,
+    );
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(clearFinishedEntriesMock).toHaveBeenCalled();
     expect(sendResponse).toHaveBeenCalledWith({ ack: true });
   });
 });

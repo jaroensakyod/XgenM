@@ -4,6 +4,7 @@ import { STORAGE_KEYS } from '@shared/constants';
 
 import {
   addToQueue,
+  clearFinishedEntries,
   loadQueue,
   removeFromQueue,
   saveQueue,
@@ -230,5 +231,43 @@ describe('setEntryStatus', () => {
     const found = updated.find((e) => e.id === 'job2');
     expect(found?.status).toBe('failed');
     expect(found?.failureReason).toBe('Composer proof failed');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// clearFinishedEntries
+// ---------------------------------------------------------------------------
+
+describe('clearFinishedEntries', () => {
+  it('removes completed, failed, and cancelled entries', async () => {
+    const pending  = makeEntry({ id: 'p', status: 'pending' });
+    const running  = makeEntry({ id: 'r', status: 'running' });
+    const done     = makeEntry({ id: 'd', status: 'completed' });
+    const failed   = makeEntry({ id: 'f', status: 'failed' });
+    const cancelled = makeEntry({ id: 'c', status: 'cancelled' });
+    mockStorage([pending, running, done, failed, cancelled]);
+
+    const kept = await clearFinishedEntries();
+
+    expect(kept.map((e) => e.id).sort()).toEqual(['p', 'r'].sort());
+  });
+
+  it('returns all entries untouched when none are finished', async () => {
+    const pending = makeEntry({ id: 'p', status: 'pending' });
+    const running = makeEntry({ id: 'r', status: 'running' });
+    mockStorage([pending, running]);
+
+    const kept = await clearFinishedEntries();
+
+    expect(kept).toHaveLength(2);
+  });
+
+  it('returns empty array when all entries are finished', async () => {
+    const done = makeEntry({ id: 'd', status: 'completed' });
+    mockStorage([done]);
+
+    const kept = await clearFinishedEntries();
+
+    expect(kept).toHaveLength(0);
   });
 });

@@ -7,7 +7,8 @@ import type { QueueEntry, QueueEntryStatus } from '@shared/schedule';
 
 interface Props {
   entries: QueueEntry[];
-  onCancel: (id: string) => void;
+  onCancelEntry: (id: string) => void;
+  onClearFinished: () => void;
 }
 
 function statusLabel(status: QueueEntryStatus): string {
@@ -85,7 +86,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: '1px solid var(--border)',
     background: 'rgba(255,255,255,0.02)',
   },
-  cancelBtn: {
+  actionBtn: {
     padding: '3px 8px',
     fontSize: 11,
     background: 'transparent',
@@ -95,9 +96,23 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     flexShrink: 0,
   },
+  clearBtn: {
+    padding: '3px 8px',
+    fontSize: 11,
+    background: 'transparent',
+    color: 'var(--text-muted)',
+    border: '1px solid var(--border)',
+    borderRadius: 5,
+    cursor: 'pointer',
+    flexShrink: 0,
+  },
 };
 
-export function QueuePanel({ entries, onCancel }: Props) {
+const FINISHED_STATUSES: QueueEntryStatus[] = ['completed', 'failed', 'cancelled'];
+
+export function QueuePanel({ entries, onCancelEntry, onClearFinished }: Props) {
+  const hasFinished = entries.some((e) => FINISHED_STATUSES.includes(e.status));
+
   if (entries.length === 0) {
     return (
       <div style={styles.section}>
@@ -109,9 +124,26 @@ export function QueuePanel({ entries, onCancel }: Props) {
 
   return (
     <div style={styles.section}>
-      <div style={styles.sectionTitle}>Queue ({entries.length})</div>
+      <div style={styles.row}>
+        <span style={styles.sectionTitle}>Queue ({entries.length})</span>
+        {hasFinished && (
+          <button
+            type="button"
+            style={styles.clearBtn}
+            onClick={onClearFinished}
+          >
+            Clear Finished
+          </button>
+        )}
+      </div>
       {entries.map((entry) => (
-        <div key={entry.id} style={styles.entry}>
+        <div
+          key={entry.id}
+          style={{
+            ...styles.entry,
+            opacity: FINISHED_STATUSES.includes(entry.status) ? 0.6 : 1,
+          }}
+        >
           <div style={styles.row}>
             <span
               style={{
@@ -126,10 +158,19 @@ export function QueuePanel({ entries, onCancel }: Props) {
             {entry.status === 'pending' && (
               <button
                 type="button"
-                style={styles.cancelBtn}
-                onClick={() => onCancel(entry.id)}
+                style={styles.actionBtn}
+                onClick={() => onCancelEntry(entry.id)}
               >
                 Cancel
+              </button>
+            )}
+            {entry.status === 'running' && (
+              <button
+                type="button"
+                style={styles.actionBtn}
+                onClick={() => onCancelEntry(entry.id)}
+              >
+                Stop
               </button>
             )}
           </div>
@@ -144,3 +185,4 @@ export function QueuePanel({ entries, onCancel }: Props) {
     </div>
   );
 }
+

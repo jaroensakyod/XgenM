@@ -7,7 +7,7 @@ import { SCHEDULER_ALARM_NAME } from '@shared/constants';
 import { getNextReadyEntry } from '@shared/schedule';
 import { startJob, cancelJob, getCurrentJob, appendRuntimeLog } from './job-runner';
 import { loadJobHistory, loadLastJob, loadSettings, saveSettings } from './storage';
-import { addToQueue, loadQueue, removeFromQueue, setEntryStatus } from './job-queue';
+import { addToQueue, clearFinishedEntries, loadQueue, removeFromQueue, setEntryStatus } from './job-queue';
 import { setNextAlarm } from './alarm-manager';
 
 function isLiveRunningState(phase: string): boolean {
@@ -18,7 +18,7 @@ function isLiveRunningState(phase: string): boolean {
 // Queue broadcast — notify all popup/side-panel ports of updated queue state
 // ---------------------------------------------------------------------------
 
-async function broadcastQueueUpdate(): Promise<void> {
+export async function broadcastQueueUpdate(): Promise<void> {
   const entries = await loadQueue();
   chrome.runtime.sendMessage({ action: 'QUEUE_UPDATE', entries }).catch(() => {
     // Popup may not be open — ignore "no receivers" error
@@ -144,6 +144,54 @@ chrome.runtime.onMessage.addListener(
         break;
       }
 
+      case 'CANCEL_QUEUE_ENTRY': {
+        (async () => {
+          try {
+            const entries = await loadQueue();
+            const entry = entries.find((e) => e.id === message.id);
+            if (!entry) {
+              sendResponse({ ack: true }); // no-op for unknown id
+              return;
+            }
+
+            if (entry.status === 'pending') {
+              await setEntryStatus(message.id, 'cancelled');
+              const updated = await loadQueue();
+              await setNextAlarm(updated);
+              sendResponse({ ack: true });
+              broadcastQueueUpdate().catch(() => {});
+            } else if (entry.status === 'running') {
+              cancelJob();
+              await setEntryStatus(message.id, 'cancelled');
+              const updated = await loadQueue();
+              await setNextAlarm(updated);
+              sendResponse({ ack: true });
+              broadcastQueueUpdate().catch(() => {});
+            } else {
+              // already finished — no-op
+              sendResponse({ ack: true });
+            }
+          } catch (error) {
+            console.error('[bg] cancelQueueEntry error', error);
+            sendResponse({ ack: false, error: 'Failed to cancel queue entry' });
+          }
+        })();
+        break;
+      }
+
+      case 'CLEAR_FINISHED_QUEUE': {
+        clearFinishedEntries()
+          .then(async () => {
+            sendResponse({ ack: true });
+            broadcastQueueUpdate().catch(() => {});
+          })
+          .catch((error) => {
+            console.error('[bg] clearFinishedQueue error', error);
+            sendResponse({ ack: false, error: 'Failed to clear finished queue' });
+          });
+        break;
+      }
+
       case 'GET_QUEUE': {
         loadQueue()
           .then((entries) => sendResponse({ entries }))
@@ -199,6 +247,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       }
 
       await setEntryStatus(entry.id, 'running');
+      await broadcastQueueUpdate();
       console.log(`[scheduler] firing job ${entry.id} scheduled for ${entry.scheduledAt}`);
 
       await startJob(entry.sourceUrl, entry.mode, entry.captionOverride);

@@ -274,7 +274,11 @@ export function App() {
   }, [queueUrl, queueMode, queueScheduledAt]);
 
   const handleCancelQueueEntry = useCallback((id: string) => {
-    chrome.runtime.sendMessage({ action: 'REMOVE_FROM_QUEUE', id });
+    chrome.runtime.sendMessage({ action: 'CANCEL_QUEUE_ENTRY', id });
+  }, []);
+
+  const handleClearFinished = useCallback(() => {
+    chrome.runtime.sendMessage({ action: 'CLEAR_FINISHED_QUEUE' });
   }, []);
 
   const isRunning =
@@ -520,7 +524,7 @@ export function App() {
         )}
       </div>
 
-      <QueuePanel entries={queue} onCancel={handleCancelQueueEntry} />
+      <QueuePanel entries={queue} onCancelEntry={handleCancelQueueEntry} onClearFinished={handleClearFinished} />
 
       {/* Logs */}
       {job && job.logs.length > 0 && <LogPanel logs={job.logs} />}

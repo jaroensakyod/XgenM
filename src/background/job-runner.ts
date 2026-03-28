@@ -53,6 +53,9 @@ async function notifyQueueOnJobEnd(
     // Reload queue after update and schedule the next alarm
     const updated = await loadQueue();
     await setNextAlarm(updated);
+
+    // Broadcast queue state to any open popup (mirror of broadcastQueueUpdate in index.ts)
+    chrome.runtime.sendMessage({ action: 'QUEUE_UPDATE', entries: await loadQueue() }).catch(() => {});
   } catch (err) {
     console.error('[job-runner] notifyQueueOnJobEnd error', err);
   }
