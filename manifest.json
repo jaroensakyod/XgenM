@@ -8,7 +8,7 @@
     "48": "assets/icon-48.png",
     "128": "assets/icon-128.png"
   },
-  "permissions": ["tabs", "storage", "scripting", "activeTab", "sidePanel"],
+  "permissions": ["tabs", "storage", "scripting", "activeTab", "sidePanel", "alarms"],
   "host_permissions": [
     "https://*.tiktok.com/*",
     "https://*.tiktokcdn.com/*",

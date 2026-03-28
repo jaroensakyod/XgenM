@@ -51,4 +51,11 @@ export const STORAGE_KEYS = {
   SETTINGS: 'xgenm_settings',
   LAST_JOB: 'xgenm_last_job',
   JOB_HISTORY: 'xgenm_job_history',
+  QUEUE: 'xgenm_queue',
 } as const;
+
+/** Chrome alarm name for the job scheduler */
+export const SCHEDULER_ALARM_NAME = 'xgenm_scheduler';
+
+/** Minimum scheduling granularity: 1 minute */
+export const MIN_SCHEDULE_INTERVAL_MS = 60_000;

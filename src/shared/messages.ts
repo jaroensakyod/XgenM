@@ -10,6 +10,7 @@ import type {
   RunMode,
   UserSettings,
 } from './types';
+import type { NewQueueEntryInput, QueueEntry } from './schedule';
 
 // ---- Action discriminators ----
 
@@ -28,7 +29,11 @@ export type MessageAction =
   | 'CLICK_POST'
   | 'X_ACTION_RESULT'
   | 'FETCH_VIDEO_BLOB'
-  | 'LOG';
+  | 'LOG'
+  | 'ADD_TO_QUEUE'
+  | 'REMOVE_FROM_QUEUE'
+  | 'GET_QUEUE'
+  | 'QUEUE_UPDATE';
 
 // ---- Message payloads ----
 
@@ -111,6 +116,31 @@ export interface LogMessage {
   phase?: JobPhase;
 }
 
+// ---- Queue messages ----
+
+/** Popup → Background: add a new job to the queue */
+export interface AddToQueueMessage {
+  action: 'ADD_TO_QUEUE';
+  entry: NewQueueEntryInput;
+}
+
+/** Popup → Background: cancel/remove a pending queue entry */
+export interface RemoveFromQueueMessage {
+  action: 'REMOVE_FROM_QUEUE';
+  id: string;
+}
+
+/** Popup → Background: request current queue state */
+export interface GetQueueMessage {
+  action: 'GET_QUEUE';
+}
+
+/** Background → Popup: broadcast updated queue state */
+export interface QueueUpdateMessage {
+  action: 'QUEUE_UPDATE';
+  entries: QueueEntry[];
+}
+
 // ---- Union ----
 
 export type RuntimeMessage =
@@ -128,4 +158,8 @@ export type RuntimeMessage =
   | ClickPostMessage
   | XActionResultMessage
   | FetchVideoBlobMessage
-  | LogMessage;
+  | LogMessage
+  | AddToQueueMessage
+  | RemoveFromQueueMessage
+  | GetQueueMessage
+  | QueueUpdateMessage;

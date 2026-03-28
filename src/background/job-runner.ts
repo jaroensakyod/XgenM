@@ -28,6 +28,37 @@ import { loadSettings, saveLastJob, appendJobHistory } from './storage';
 import { runXPostSession } from './x-post-session';
 
 // ---------------------------------------------------------------------------
+// Queue integration — imported lazily to avoid circular dependency risk
+// These are called only at job terminal states (completed/failed).
+// ---------------------------------------------------------------------------
+
+async function notifyQueueOnJobEnd(
+  jobId: string,
+  outcome: 'completed' | 'failed',
+  failureReason?: string,
+): Promise<void> {
+  try {
+    // Dynamic import to keep job-runner testable without full queue setup
+    const { loadQueue, setEntryStatus } = await import('./job-queue');
+    const { setNextAlarm } = await import('./alarm-manager');
+
+    const entries = await loadQueue();
+    // Find the running entry that corresponds to this job execution.
+    // We match by status='running' — at most one entry can be running at a time.
+    const running = entries.find((e) => e.status === 'running');
+    if (running) {
+      await setEntryStatus(running.id, outcome, failureReason ? { failureReason } : undefined);
+    }
+
+    // Reload queue after update and schedule the next alarm
+    const updated = await loadQueue();
+    await setNextAlarm(updated);
+  } catch (err) {
+    console.error('[job-runner] notifyQueueOnJobEnd error', err);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 
@@ -494,6 +525,7 @@ export async function startJob(
     }
     broadcast(currentJob);
     appendJobHistory(currentJob);
+    notifyQueueOnJobEnd(currentJob.jobId, 'completed');
   } catch (err) {
     currentJob.phase = 'failed';
     const message = err instanceof Error ? err.message : String(err);
@@ -503,6 +535,7 @@ export async function startJob(
     log(`Error: ${message}`);
     broadcast(currentJob);
     appendJobHistory(currentJob);
+    notifyQueueOnJobEnd(currentJob.jobId, 'failed', currentJob.error);
   }
 }
 
