@@ -9,12 +9,14 @@ import {
   type UserSettings,
 } from '@shared/types';
 import { ERROR_RECOVERY_HINTS } from '@shared/errors';
-import type { JobStateUpdateMessage, RuntimeMessage } from '@shared/messages';
+import type { JobStateUpdateMessage, QueueUpdateMessage, RuntimeMessage } from '@shared/messages';
+import type { QueueEntry } from '@shared/schedule';
 import { UrlInput } from './components/UrlInput';
 import { PreviewCard } from './components/PreviewCard';
 import { ModeToggle } from './components/ModeToggle';
 import { RunButton } from './components/RunButton';
 import { LogPanel } from './components/LogPanel';
+import { QueuePanel } from './components/QueuePanel';
 
 type JobStateSource = 'live' | 'persisted' | 'none';
 
@@ -140,12 +142,23 @@ export function App() {
   const [settingsStatus, setSettingsStatus] = useState('');
   const [history, setHistory] = useState<JobState[]>([]);
 
+  // Queue state
+  const [queue, setQueue] = useState<QueueEntry[]>([]);
+  const [queueFormOpen, setQueueFormOpen] = useState(false);
+  const [queueUrl, setQueueUrl] = useState('');
+  const [queueMode, setQueueMode] = useState<RunMode>(DEFAULT_SETTINGS.defaultMode);
+  const [queueScheduledAt, setQueueScheduledAt] = useState('');
+  const [queueFormError, setQueueFormError] = useState('');
+
   // Listen for job state broadcasts
   useEffect(() => {
     const listener = (message: RuntimeMessage) => {
       if (message.action === 'JOB_STATE_UPDATE') {
         setJob((message as JobStateUpdateMessage).state);
         setJobSource('live');
+      }
+      if (message.action === 'QUEUE_UPDATE') {
+        setQueue((message as QueueUpdateMessage).entries);
       }
     };
     chrome.runtime.onMessage.addListener(listener);
@@ -174,6 +187,13 @@ export function App() {
       { action: 'GET_JOB_HISTORY' },
       (resp: { history?: JobState[] }) => {
         setHistory(resp?.history ?? []);
+      },
+    );
+
+    chrome.runtime.sendMessage(
+      { action: 'GET_QUEUE' },
+      (resp: { entries?: QueueEntry[] }) => {
+        setQueue(resp?.entries ?? []);
       },
     );
 
@@ -228,6 +248,38 @@ export function App() {
       },
     );
   }, [settingsDraft]);
+
+  const handleAddToQueue = useCallback(() => {
+    if (!queueUrl.trim() || !queueScheduledAt) {
+      setQueueFormError('URL and scheduled time are required.');
+      return;
+    }
+    setQueueFormError('');
+    const scheduledAt = new Date(queueScheduledAt).toISOString();
+    chrome.runtime.sendMessage(
+      {
+        action: 'ADD_TO_QUEUE',
+        entry: { kind: 'cross-post', sourceUrl: queueUrl.trim(), mode: queueMode, scheduledAt },
+      },
+      (resp: { entry?: QueueEntry | null; error?: string }) => {
+        if (!resp?.entry) {
+          setQueueFormError(resp?.error ?? 'Failed to add to queue.');
+          return;
+        }
+        setQueueFormOpen(false);
+        setQueueUrl('');
+        setQueueScheduledAt('');
+      },
+    );
+  }, [queueUrl, queueMode, queueScheduledAt]);
+
+  const handleCancelQueueEntry = useCallback((id: string) => {
+    chrome.runtime.sendMessage({ action: 'CANCEL_QUEUE_ENTRY', id });
+  }, []);
+
+  const handleClearFinished = useCallback(() => {
+    chrome.runtime.sendMessage({ action: 'CLEAR_FINISHED_QUEUE' });
+  }, []);
 
   const isRunning =
     job !== null &&
@@ -409,6 +461,70 @@ export function App() {
         onStart={handleStart}
         onCancel={handleCancel}
       />
+
+      {/* Scheduled Queue */}
+      <div style={styles.section}>
+        <div style={{ ...styles.row, alignItems: 'center' }}>
+          <span style={styles.sectionTitle}>Schedule a Job</span>
+          <button
+            type="button"
+            style={{
+              ...styles.button,
+              padding: '4px 10px',
+              fontSize: 12,
+            }}
+            onClick={() => {
+              setQueueFormOpen((open) => !open);
+              setQueueFormError('');
+            }}
+          >
+            {queueFormOpen ? 'Close' : '+ Add'}
+          </button>
+        </div>
+
+        {queueFormOpen && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <UrlInput value={queueUrl} onChange={setQueueUrl} disabled={false} />
+            <div style={styles.row}>
+              <label htmlFor="queue-mode" style={styles.helperText}>Mode</label>
+              <select
+                id="queue-mode"
+                value={queueMode}
+                onChange={(e) => setQueueMode(e.target.value as RunMode)}
+                style={styles.smallInput}
+              >
+                <option value="prepare-draft">Draft</option>
+                <option value="auto-post">Auto-post</option>
+              </select>
+            </div>
+            <div>
+              <label htmlFor="queue-schedule" style={{ ...styles.helperText, display: 'block', marginBottom: 4 }}>
+                Scheduled time
+              </label>
+              <input
+                id="queue-schedule"
+                type="datetime-local"
+                value={queueScheduledAt}
+                onChange={(e) => setQueueScheduledAt(e.target.value)}
+                style={styles.input}
+              />
+            </div>
+            {queueFormError && (
+              <div style={styles.errorText}>{queueFormError}</div>
+            )}
+            <button
+              type="button"
+              style={styles.button}
+              disabled={!queueUrl.trim() || !queueScheduledAt}
+              onClick={handleAddToQueue}
+            >
+              Add to Queue
+            </button>
+          </div>
+        )}
+      </div>
+
+      <QueuePanel entries={queue} onCancelEntry={handleCancelQueueEntry} onClearFinished={handleClearFinished} />
 
       {/* Logs */}
       {job && job.logs.length > 0 && <LogPanel logs={job.logs} />}
